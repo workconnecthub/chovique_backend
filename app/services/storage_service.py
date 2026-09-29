@@ -85,23 +85,22 @@ class StorageService:
         Objects are stored with public-read ACL so the URLs can be served directly.
         """
         s3 = get_s3_client()
+        logger.info("Uploading to S3 (Bucket=%s, Key=%s, Size=%d bytes)", settings.S3_BUCKET_NAME, key, len(data))
         try:
             s3.put_object(
                 Bucket=settings.S3_BUCKET_NAME,
                 Key=key,
                 Body=data,
                 ContentType=content_type,
-                # Make the object publicly readable
-                ACL="public-read",
             )
             url = get_public_url(key)
-            logger.info("Uploaded to S3 key '%s': %s", key, url)
+            logger.info("Successfully uploaded to S3 key '%s': %s", key, url)
             return url
         except (BotoCoreError, ClientError) as exc:
-            logger.error("S3 upload failed for key '%s': %s", key, exc)
+            logger.error("S3 upload failed for bucket '%s', key '%s': %s", settings.S3_BUCKET_NAME, key, exc)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to upload file to storage: {exc}",
+                detail=f"Failed to upload file to storage bucket '{settings.S3_BUCKET_NAME}': {exc}",
             )
 
     def _build_key(self, folder: str, filename: str) -> str:

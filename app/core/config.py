@@ -252,13 +252,81 @@ class Settings(BaseSettings):
     # RAILWAY S3-COMPATIBLE BUCKET (Tigris)
     # =========================================================
 
-    S3_ENDPOINT_URL: str = ""
-    S3_REGION: str = "auto"
-    S3_BUCKET_NAME: str = ""
-    S3_ACCESS_KEY_ID: str = ""
-    S3_SECRET_ACCESS_KEY: str = ""
+    S3_ENDPOINT_URL: str = Field(
+        default="https://t3.storageapi.dev",
+        validation_alias=AliasChoices(
+            "S3_ENDPOINT_URL",
+            "ENDPOINT_URL",
+            "ENDPOINT",
+            "AWS_ENDPOINT_URL_S3",
+            "AWS_ENDPOINT_URL",
+            "TIGRIS_URI",
+        ),
+    )
+    S3_REGION: str = Field(
+        default="auto",
+        validation_alias=AliasChoices(
+            "S3_REGION",
+            "REGION",
+            "AWS_REGION",
+            "AWS_DEFAULT_REGION",
+        ),
+    )
+    S3_BUCKET_NAME: str = Field(
+        default="neat-crate-hruffn9s2hbs2l",
+        validation_alias=AliasChoices(
+            "S3_BUCKET_NAME",
+            "BUCKET_NAME",
+            "BUCKET",
+            "TIGRIS_BUCKET",
+            "AWS_BUCKET_NAME",
+        ),
+    )
+    S3_ACCESS_KEY_ID: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "S3_ACCESS_KEY_ID",
+            "ACCESS_KEY_ID",
+            "AWS_ACCESS_KEY_ID",
+            "TIGRIS_ACCESS_KEY_ID",
+        ),
+    )
+    S3_SECRET_ACCESS_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "S3_SECRET_ACCESS_KEY",
+            "SECRET_ACCESS_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "TIGRIS_SECRET_ACCESS_KEY",
+        ),
+    )
     # Base URL served to clients. Leave blank to auto-derive from endpoint + bucket.
-    S3_PUBLIC_BASE_URL: str = ""
+    S3_PUBLIC_BASE_URL: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "S3_PUBLIC_BASE_URL",
+            "PUBLIC_BASE_URL",
+        ),
+    )
+
+    @field_validator("S3_BUCKET_NAME", mode="before")
+    @classmethod
+    def clean_bucket_name(cls, value):
+        if not value:
+            return "neat-crate-hruffn9s2hbs2l"
+        if isinstance(value, str):
+            value = value.strip().strip("'\"")
+            # If the user only gave the display prefix (neat-crate) without the Tigris hash suffix
+            if value == "neat-crate":
+                value = "neat-crate-hruffn9s2hbs2l"
+        return value
+
+    @field_validator("S3_ENDPOINT_URL", mode="before")
+    @classmethod
+    def clean_endpoint_url(cls, value):
+        if not value or not str(value).strip():
+            return "https://t3.storageapi.dev"
+        return str(value).strip().strip("'\"").rstrip("/")
 
     # =========================================================
     # SUPERADMIN
