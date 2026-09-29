@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.storage import storage_service
+from app.services.storage_service import storage_service
 from app.models.user import User
 from app.repositories.address_repository import AddressRepository
 from app.repositories.contact_repository import ContactRepository

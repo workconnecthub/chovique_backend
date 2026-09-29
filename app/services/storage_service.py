@@ -14,7 +14,7 @@ from typing import Optional
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import HTTPException, UploadFile, status
 
-from app.core.storage import get_public_url, get_s3_client
+from app.core.bucket_client import get_public_url, get_s3_client
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -195,13 +195,15 @@ class StorageService:
         Extract the S3 object key from a public URL so it can be deleted.
 
         Handles:
-          - /api/v1/storage/{key}
-          - https://{backend}/api/v1/storage/{key}
+          - /api/v1/media/{key} or /api/v1/storage/{key}
+          - https://{backend}/api/v1/media/{key}
           - Direct S3/Tigris URL (if used)
           - Bare S3 key
         """
         if not url:
             return None
+        if "/media/" in url:
+            return url.split("/media/", 1)[1]
         if "/storage/" in url:
             return url.split("/storage/", 1)[1]
         
@@ -222,6 +224,8 @@ class StorageService:
         if not public_id:
             return None
 
+        if "/media/" in public_id:
+            return public_id.split("/media/", 1)[1]
         if "/storage/" in public_id:
             return public_id.split("/storage/", 1)[1]
 

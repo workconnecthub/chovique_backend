@@ -2000,7 +2000,7 @@ class AdminService:
     ) -> ReelResponse:
         # If a new video file is uploaded, push to S3 storage
         if video_file and hasattr(video_file, "filename") and video_file.filename:
-            from app.integrations.storage import storage_service
+            from app.services.storage_service import storage_service
             video_url = await storage_service.upload_video(
                 file=video_file,
                 folder="chocolate-world/reels",
