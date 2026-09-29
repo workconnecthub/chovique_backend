@@ -194,20 +194,23 @@ class StorageService:
         """
         Extract the S3 object key from a public URL so it can be deleted.
 
-        For old Cloudinary URLs (if any exist in DB), extracts the S3 key.
-        URL itself (delete_media will handle the extraction).
-        For new S3 URLs the key is everything after the bucket path prefix.
+        Handles:
+          - /api/v1/storage/{key}
+          - https://{backend}/api/v1/storage/{key}
+          - Direct S3/Tigris URL (if used)
+          - Bare S3 key
         """
         if not url:
             return None
-        # New S3 URL — strip base prefix
+        if "/storage/" in url:
+            return url.split("/storage/", 1)[1]
+        
         base = settings.S3_PUBLIC_BASE_URL.rstrip("/")
         if not base:
             endpoint = settings.S3_ENDPOINT_URL.rstrip("/")
             base = f"{endpoint}/{settings.S3_BUCKET_NAME}"
         if url.startswith(base + "/"):
             return url[len(base) + 1:]
-        # Fallback: return the URL as-is; _key_from_public_id handles it
         return url
 
     # ── Internal ──────────────────────────────────────────────────────────
@@ -215,16 +218,13 @@ class StorageService:
     def _key_from_public_id(self, public_id: str) -> Optional[str]:
         """
         Resolve whatever string was passed to delete_media into an S3 key.
-
-        Handles:
-          1. Already a plain S3 key  ('chocolate-world/products/abc.jpg')
-          2. Full public URL built by get_public_url()
-          3. Old Cloudinary public IDs — skipped gracefully
         """
         if not public_id:
             return None
 
-        # Strip base URL prefix if present
+        if "/storage/" in public_id:
+            return public_id.split("/storage/", 1)[1]
+
         base = settings.S3_PUBLIC_BASE_URL.rstrip("/")
         if not base:
             endpoint = settings.S3_ENDPOINT_URL.rstrip("/")
@@ -233,11 +233,9 @@ class StorageService:
         if public_id.startswith("http://") or public_id.startswith("https://"):
             if public_id.startswith(base + "/"):
                 return public_id[len(base) + 1:]
-            # URL from a different provider (old data) — skip gracefully
             logger.debug("Skipping non-S3 URL in delete_media: %s", public_id)
             return None
 
-        # Already a bare key
         return public_id
 
     # ── Backward-compat alias (admin_service calls delete_image too) ──────

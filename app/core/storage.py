@@ -31,17 +31,23 @@ def get_s3_client():
 
 def get_public_url(key: str) -> str:
     """
-    Build the public HTTPS URL for an object stored in the bucket.
+    Build the public URL for an object stored in the bucket.
 
-    If S3_PUBLIC_BASE_URL is set in .env that value is used directly.
-    Otherwise we derive it from the endpoint URL + bucket name.
-
-    Railway / Tigris public URLs look like:
-        https://<bucket>.t3.storageapi.dev/<key>
+    Because Railway S3 buckets (Tigris) are private by default and direct
+    GET requests return 403 Forbidden, we route asset access through the
+    backend storage endpoint `/api/v1/storage/{key}`.
+    This endpoint redirects to a time-limited presigned URL, allowing
+    browsers to load images and media smoothly without auth issues.
     """
-    base = settings.S3_PUBLIC_BASE_URL.rstrip("/")
-    if not base:
-        # Derive: strip trailing slash from endpoint, append bucket name
-        endpoint = settings.S3_ENDPOINT_URL.rstrip("/")
-        base = f"{endpoint}/{settings.S3_BUCKET_NAME}"
-    return f"{base}/{key}"
+    clean_key = key.lstrip("/")
+
+    custom_base = settings.S3_PUBLIC_BASE_URL.rstrip("/")
+    if custom_base and not ("storageapi.dev" in custom_base):
+        return f"{custom_base}/{clean_key}"
+
+    backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
+    prefix = getattr(settings, "API_V1_PREFIX", "/api/v1").rstrip("/")
+    if backend_url:
+        return f"{backend_url}{prefix}/storage/{clean_key}"
+    return f"{prefix}/storage/{clean_key}"
+
