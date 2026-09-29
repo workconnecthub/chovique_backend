@@ -24,7 +24,7 @@ from app.schemas.product import (
     ProductUpdate,
     ReviewResponse,
 )
-from app.services.cloudinary_service import cloudinary_service
+from app.services.storage_service import storage_service
 from app.services.customer_service import CustomerService
 from app.services.product_service import ProductService
 from pydantic import BaseModel, Field
@@ -216,16 +216,16 @@ async def create_product(
         g_files = gallery_images if isinstance(gallery_images, list) else [gallery_images]
         for g_file in g_files:
             if g_file and hasattr(g_file, "filename") and g_file.filename:
-                g_url = await cloudinary_service.upload_image(
+                g_url = await storage_service.upload_image(
                     file=g_file,
                     folder="chocolate-world/products",
                 )
                 gallery_urls.append(g_url)
 
-    # Upload main image to Cloudinary folder "chocolate-world/products"
+    # Upload main image to S3 storage folder "chocolate-world/products"
     image_url: Optional[str] = None
     if image and hasattr(image, "filename") and image.filename:
-        image_url = await cloudinary_service.upload_image(
+        image_url = await storage_service.upload_image(
             file=image,
             folder="chocolate-world/products",
         )
@@ -335,7 +335,7 @@ async def update_product_image(
     image_urls = []
     for img in images:
         if img and hasattr(img, "filename") and img.filename:
-            url = await cloudinary_service.upload_image(
+            url = await storage_service.upload_image(
                 file=img,
                 folder="chocolate-world/products",
             )
@@ -346,17 +346,17 @@ async def update_product_image(
 
     # Delete old main image if exists
     if product.image:
-        public_id = cloudinary_service.extract_public_id(product.image)
+        public_id = storage_service.extract_public_id(product.image)
         if public_id:
-            cloudinary_service.delete_media(public_id)
+            storage_service.delete_media(public_id)
 
     # Also delete old gallery images
     if product.images:
         for old_img in product.images:
             if old_img and old_img != product.image:
-                public_id = cloudinary_service.extract_public_id(old_img)
+                public_id = storage_service.extract_public_id(old_img)
                 if public_id:
-                    cloudinary_service.delete_media(public_id)
+                    storage_service.delete_media(public_id)
 
     updated_product = await service.update_product(
         product_id, 

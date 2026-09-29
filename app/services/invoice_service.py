@@ -251,24 +251,24 @@ class InvoiceService:
     @classmethod
     async def generate_and_upload_invoice(cls, order: Order, user_name: str, user_email: str) -> Optional[str]:
         """
-        Generate HTML invoice and upload to Cloudinary.
-        Returns the secure Cloudinary URL or None if upload fails/disabled.
+        Generate HTML invoice and upload to S3 storage.
+        Returns the secure S3 URL or None if upload fails/disabled.
         """
         try:
-            from app.services.cloudinary_service import cloudinary_service
+            from app.services.storage_service import storage_service
             html_content = cls.generate_html_invoice(order, user_name, user_email)
             html_bytes = html_content.encode("utf-8")
             
             filename = f"INV-{order.id}"
-            secure_url = await cloudinary_service.upload_bytes(
+            secure_url = await storage_service.upload_bytes(
                 file_bytes=html_bytes,
                 filename=filename,
                 folder="chocolate-world/invoices",
                 resource_type="raw",
             )
-            logger.info("Successfully uploaded invoice for order %s to Cloudinary: %s", order.id, secure_url)
+            logger.info("Successfully uploaded invoice for order %s to S3 storage: %s", order.id, secure_url)
             return secure_url
         except Exception as e:
-            logger.warning("Failed to upload invoice to Cloudinary for order %s: %s", order.id, e)
+            logger.warning("Failed to upload invoice to S3 storage for order %s: %s", order.id, e)
             return None
 

@@ -209,7 +209,7 @@ for fallback_origin in [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_origin_regex=r"^https://chovique(-[a-zA-Z0-9_-]+)?\.vercel\.app$",
+    allow_origin_regex=r"^https://(.*\.railway\.app|.*\.up\.railway\.app|chovique(-[a-zA-Z0-9_-]+)?\.vercel\.app)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -67,7 +67,7 @@ async def get_order(
 
 @router.get(
     "/{order_id}/invoice",
-    summary="Get order invoice as HTML or Cloudinary redirect",
+    summary="Get order invoice as HTML or S3 redirect",
 )
 async def get_order_invoice(
     order_id: str,

@@ -240,12 +240,24 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
 
     # =========================================================
-    # CLOUDINARY
+    # CLOUDINARY (inactive — fields kept to avoid env-var parse errors on Railway)
     # =========================================================
 
     CLOUDINARY_CLOUD_NAME: str = ""
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
+
+    # =========================================================
+    # RAILWAY S3-COMPATIBLE BUCKET (Tigris)
+    # =========================================================
+
+    S3_ENDPOINT_URL: str = ""
+    S3_REGION: str = "auto"
+    S3_BUCKET_NAME: str = ""
+    S3_ACCESS_KEY_ID: str = ""
+    S3_SECRET_ACCESS_KEY: str = ""
+    # Base URL served to clients. Leave blank to auto-derive from endpoint + bucket.
+    S3_PUBLIC_BASE_URL: str = ""
 
     # =========================================================
     # SUPERADMIN

@@ -66,7 +66,7 @@ from app.schemas.home import BannerResponse, ContactInfoResponse, StatsResponse,
 from app.schemas.order import OrderResponse
 from app.schemas.ticket import SupportTicketResponse, UpdateTicketStatusPayload
 from app.schemas.user import SystemUserResponse, UserResponse
-from app.services.cloudinary_service import cloudinary_service
+from app.services.storage_service import storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -124,14 +124,14 @@ class AdminService:
         image_file: UploadFile | None = None,
         image_url: str | None = None,
     ):
-        """Create a category, optionally uploading image to Cloudinary."""
+        """Create a category, optionally uploading image to S3 storage."""
         import re
 
         final_slug = slug or re.sub(r"[^\w\s-]", "", name.lower().strip()).replace(" ", "-")
         final_image_url: str | None = image_url
 
         if image_file and image_file.filename:
-            final_image_url = await cloudinary_service.upload_image(
+            final_image_url = await storage_service.upload_image(
                 image_file, folder="chovique/categories"
             )
 
@@ -158,7 +158,7 @@ class AdminService:
         if not category:
             return ""
 
-        new_url = await cloudinary_service.upload_image(
+        new_url = await storage_service.upload_image(
             image_file, folder="chovique/categories"
         )
         await self.category_repo.update(category_id, image_url=new_url)
@@ -1317,12 +1317,12 @@ class AdminService:
             return False
 
         if getattr(user, "avatar_url", None):
-            public_id = cloudinary_service.extract_public_id(user.avatar_url)
+            public_id = storage_service.extract_public_id(user.avatar_url)
             if public_id:
                 try:
-                    cloudinary_service.delete_media(public_id)
+                    storage_service.delete_media(public_id)
                 except Exception as e:
-                    logger.warning("Failed to delete Cloudinary avatar '%s' for user %s: %s", public_id, user_id, e)
+                    logger.warning("Failed to delete S3 avatar '%s' for user %s: %s", public_id, user_id, e)
 
         await self.db.delete(user)
         await self.db.commit()
@@ -1884,7 +1884,7 @@ class AdminService:
     ) -> BannerResponse:
         image_url = payload.image
         if image_file and hasattr(image_file, "filename") and image_file.filename:
-            image_url = await cloudinary_service.upload_image(
+            image_url = await storage_service.upload_image(
                 file=image_file,
                 folder="chocolate-world/banners",
             )
@@ -1927,7 +1927,7 @@ class AdminService:
     ) -> TestimonialResponse:
         avatar_url = payload.avatar_url
         if avatar_file and hasattr(avatar_file, "filename") and avatar_file.filename:
-            avatar_url = await cloudinary_service.upload_image(
+            avatar_url = await storage_service.upload_image(
                 file=avatar_file,
                 folder="chocolate-world/testimonials",
             )
@@ -1955,7 +1955,7 @@ class AdminService:
     ) -> ReelResponse:
         video_url = payload.video_url
         if video_file and hasattr(video_file, "filename") and video_file.filename:
-            video_url = await cloudinary_service.upload_video(
+            video_url = await storage_service.upload_video(
                 file=video_file,
                 folder="chocolate-world/reels",
             )
@@ -1998,10 +1998,10 @@ class AdminService:
         video_url: Optional[str] = None,
         video_file=None,
     ) -> ReelResponse:
-        # If a new video file is uploaded, push to Cloudinary
+        # If a new video file is uploaded, push to S3 storage
         if video_file and hasattr(video_file, "filename") and video_file.filename:
-            from app.integrations.cloudinary import cloudinary_service
-            video_url = await cloudinary_service.upload_video(
+            from app.integrations.storage import storage_service
+            video_url = await storage_service.upload_video(
                 file=video_file,
                 folder="chocolate-world/reels",
             )
@@ -2136,7 +2136,7 @@ class AdminService:
 
     async def upload_story_video(self, video_file: UploadFile) -> str:
         """Upload crafting video for Our Story section."""
-        video_url = await cloudinary_service.upload_video(
+        video_url = await storage_service.upload_video(
             file=video_file,
             folder="chocolate-world/story",
         )
@@ -2161,13 +2161,13 @@ class AdminService:
     # ==========================================================
 
     async def upload_banner_image(self, banner_id: str, image_file: UploadFile) -> str:
-        """Upload banner image to Cloudinary, cleanup old Cloudinary asset, update DB record and return URL."""
+        """Upload banner image to S3 storage, cleanup old S3 asset, update DB record and return URL."""
         banner = await self.banner_repo.get_by_id(banner_id)
         if not banner:
             raise ValueError(f"Banner slide with ID '{banner_id}' not found.")
 
-        # Cleanup old Cloudinary image if exists
-        if banner.image and "cloudinary.com" in banner.image:
+        # Cleanup old S3 image if exists
+        if banner.image and "t3.storageapi.dev" in banner.image:
             try:
                 parts = banner.image.split("/")
                 if "upload" in parts:
@@ -2178,12 +2178,12 @@ class AdminService:
                     public_id_with_ext = "/".join(after_upload)
                     public_id = public_id_with_ext.rsplit(".", 1)[0]
                     if public_id:
-                        await cloudinary_service.delete_image(public_id)
+                        await storage_service.delete_image(public_id)
             except Exception as e:
-                logger.warning("Could not delete previous Cloudinary banner asset: %s", e)
+                logger.warning("Could not delete previous S3 storage banner asset: %s", e)
 
-        # Upload new image to Cloudinary
-        new_url = await cloudinary_service.upload_image(
+        # Upload new image to S3 storage
+        new_url = await storage_service.upload_image(
             file=image_file,
             folder="chocolate-world/banners",
         )

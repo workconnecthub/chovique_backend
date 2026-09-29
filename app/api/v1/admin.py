@@ -1457,7 +1457,7 @@ async def update_payment_status(
 
 @router.get(
     "/orders/{order_id}/invoice",
-    summary="Get order invoice HTML or Cloudinary redirect (admin only)",
+    summary="Get order invoice HTML or S3 redirect (admin only)",
 )
 async def get_admin_order_invoice(
     order_id: str,

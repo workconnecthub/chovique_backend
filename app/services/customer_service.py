@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.integrations.cloudinary import cloudinary_service
+from app.integrations.storage import storage_service
 from app.models.user import User
 from app.repositories.address_repository import AddressRepository
 from app.repositories.contact_repository import ContactRepository
@@ -158,17 +158,17 @@ class CustomerService:
     ) -> AvatarUploadResponse:
         user = await self.user_repo.get_by_id(user_id)
         if user and user.avatar_url:
-            old_public_id = cloudinary_service.extract_public_id(user.avatar_url)
+            old_public_id = storage_service.extract_public_id(user.avatar_url)
             if old_public_id:
                 try:
-                    cloudinary_service.delete_media(old_public_id)
+                    storage_service.delete_media(old_public_id)
                 except Exception as e:
-                    logger.warning("Failed to delete previous Cloudinary avatar '%s' for user %s: %s", old_public_id, user_id, e)
+                    logger.warning("Failed to delete previous S3 avatar '%s' for user %s: %s", old_public_id, user_id, e)
 
         if not file.filename:
             file.filename = f"{user_id}.jpg"
 
-        avatar_url = await cloudinary_service.upload_image(
+        avatar_url = await storage_service.upload_image(
             file=file,
             folder="chocolate-world/avatars",
         )
@@ -559,7 +559,7 @@ class CustomerService:
         except Exception as e:
             logger.error(f"Failed to trigger email for order {order.id}: {e}")
 
-        # Generate & Upload Invoice to Cloudinary
+        # Generate & Upload Invoice to S3 storage
         try:
             from app.services.invoice_service import InvoiceService
             user = await self.user_repo.get_by_id(user_id)
@@ -572,7 +572,7 @@ class CustomerService:
                     db_order.invoice_url = inv_url
                     await self.db.commit()
         except Exception as e:
-            logger.warning(f"Failed to process Cloudinary invoice for order {order.id}: {e}")
+            logger.warning(f"Failed to process S3 invoice for order {order.id}: {e}")
 
         try:
             db_order = await self.order_repo.get_by_id(order.id)

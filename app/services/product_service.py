@@ -184,8 +184,8 @@ class ProductService:
         if not existing:
             return False
 
-        # Delete all associated Cloudinary images before removing from DB
-        from app.services.cloudinary_service import cloudinary_service
+        # Delete all associated S3 images before removing from DB
+        from app.services.storage_service import storage_service
 
         images_to_delete: list[str] = []
 
@@ -199,16 +199,16 @@ class ProductService:
                     images_to_delete.append(img_url)
 
         for url in images_to_delete:
-            public_id = cloudinary_service.extract_public_id(url)
+            public_id = storage_service.extract_public_id(url)
             if public_id:
                 try:
-                    cloudinary_service.delete_media(public_id)
+                    storage_service.delete_media(public_id)
                 except Exception as e:
-                    logger.warning("Failed to delete Cloudinary image '%s' for product %s: %s", public_id, product_id, e)
+                    logger.warning("Failed to delete S3 image '%s' for product %s: %s", public_id, product_id, e)
 
         await self.product_repo.delete(product_id)
 
-        logger.info("Product deleted: id=%s (Cloudinary images cleaned up: %d)", product_id, len(images_to_delete))
+        logger.info("Product deleted: id=%s (S3 images cleaned up: %d)", product_id, len(images_to_delete))
 
         return True
 
