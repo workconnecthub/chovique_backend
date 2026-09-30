@@ -238,6 +238,7 @@ async def get_admin_activity_logs(
 # ======================================================
 
 from fastapi import Response
+from app.api.v1.auth import clear_auth_cookies
 
 
 @router.post("/logout", summary="Secure admin logout")
@@ -250,12 +251,7 @@ async def admin_logout(
     await db.execute(delete(RefreshToken).where(RefreshToken.user_id == current_user.id))
 
     # 2. Clear authentication cookies
-    is_prod = not settings.DEBUG
-    samesite_mode = "none" if is_prod else "lax"
-    secure_mode = is_prod
-
-    response.delete_cookie(key="access_token", httponly=True, secure=secure_mode, samesite=samesite_mode)
-    response.delete_cookie(key="refresh_token", httponly=True, secure=secure_mode, samesite=samesite_mode)
+    clear_auth_cookies(response)
 
     # 3. Log activity
     await log_admin_activity(

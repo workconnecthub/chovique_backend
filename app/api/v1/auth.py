@@ -119,6 +119,39 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str, 
     return csrf_token
 
 
+def clear_auth_cookies(response: Response):
+    """
+    Consistently clear all authentication and session cookies across environments.
+    Matches SameSite, Secure, and path attributes used during cookie creation.
+    """
+    is_prod = not settings.DEBUG
+    samesite_mode = "none" if is_prod else "lax"
+    secure_mode = is_prod
+
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        httponly=True,
+        secure=secure_mode,
+        samesite=samesite_mode,
+    )
+    response.delete_cookie(
+        key="refresh_token",
+        path="/",
+        httponly=True,
+        secure=secure_mode,
+        samesite=samesite_mode,
+    )
+    response.delete_cookie(
+        key="csrf_token",
+        path="/",
+        httponly=False,
+        secure=secure_mode,
+        samesite=samesite_mode,
+    )
+
+
+
 # ======================================================
 # CSRF TOKEN
 # ======================================================
@@ -488,28 +521,7 @@ async def logout(
             access_token=extracted_access_token
         )
         # Delete cookies
-        is_prod = not settings.DEBUG
-        samesite_mode = "none" if is_prod else "lax"
-        secure_mode = is_prod
-
-        response.delete_cookie(
-            key="access_token",
-            httponly=True,
-            secure=secure_mode,
-            samesite=samesite_mode,
-        )
-        response.delete_cookie(
-            key="refresh_token",
-            httponly=True,
-            secure=secure_mode,
-            samesite=samesite_mode,
-        )
-        response.delete_cookie(
-            key="csrf_token",
-            httponly=False,
-            secure=secure_mode,
-            samesite=samesite_mode,
-        )
+        clear_auth_cookies(response)
         return {
             "message":
             "Logout successful."
