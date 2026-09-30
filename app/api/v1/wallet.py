@@ -6,6 +6,7 @@ from app.models.user import User
 from app.schemas.wallet import (
     UserWalletResponse,
     CoinTransactionResponse,
+    PaginatedCoinTransactionsResponse,
     CalculateRedemptionRequest,
     CalculateRedemptionResponse,
 )
@@ -23,7 +24,7 @@ async def get_wallet(
     return await service.get_user_wallet_details(current_user.id)
 
 
-@router.get("/transactions", summary="Get transaction history with filtering and pagination")
+@router.get("/transactions", response_model=PaginatedCoinTransactionsResponse, summary="Get transaction history with filtering and pagination")
 async def get_transactions(
     type: Optional[str] = Query(None, description="ALL, EARN, REDEEM, ADJUSTMENT"),
     page: int = Query(1, ge=1),
@@ -35,6 +36,9 @@ async def get_transactions(
     service = WalletService(db)
     calc_offset = offset if offset is not None else (page - 1) * limit
     txs = await service.wallet_repo.get_transactions(current_user.id, type_filter=type, limit=limit, offset=calc_offset)
+    total = await service.wallet_repo.count_transactions(current_user.id, type_filter=type)
+    pages = max(1, (total + limit - 1) // limit) if limit > 0 else 1
+    actual_page = (calc_offset // limit) + 1 if limit > 0 else page
     from datetime import datetime, timezone, timedelta
     now_utc = datetime.now(timezone.utc)
     settings = await service.get_reward_settings()
@@ -80,7 +84,7 @@ async def get_transactions(
     return {
         "items": items,
         "total": total,
-        "page": page,
+        "page": actual_page,
         "pages": pages,
         "limit": limit
     }

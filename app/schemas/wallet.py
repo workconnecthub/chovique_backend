@@ -19,6 +19,15 @@ class CoinTransactionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PaginatedCoinTransactionsResponse(BaseModel):
+    items: List[CoinTransactionResponse]
+    total: int
+    page: int
+    pages: int
+    limit: int
+
+
+
 class RewardSettingsSchema(BaseModel):
     reward_system_enabled: bool = True
     spend_per_coin: float = 10.0      # ₹10 spent = 1 coin earned (10 coins per ₹100)
