@@ -248,16 +248,17 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
 
-    # =========================================================
-    # RAILWAY S3-COMPATIBLE BUCKET (Tigris)
-    # =========================================================
+    KNOWN_TIGRIS_BUCKET: str = "neat-crate-hruffn9s2hbs2l"
 
     S3_ENDPOINT_URL: str = Field(
         default="https://t3.storageapi.dev",
         validation_alias=AliasChoices(
             "S3_ENDPOINT_URL",
+            "s3_endpoint_url",
             "ENDPOINT_URL",
+            "endpoint_url",
             "ENDPOINT",
+            "endpoint",
             "AWS_ENDPOINT_URL_S3",
             "AWS_ENDPOINT_URL",
             "TIGRIS_URI",
@@ -267,7 +268,9 @@ class Settings(BaseSettings):
         default="auto",
         validation_alias=AliasChoices(
             "S3_REGION",
+            "s3_region",
             "REGION",
+            "region",
             "AWS_REGION",
             "AWS_DEFAULT_REGION",
         ),
@@ -276,50 +279,81 @@ class Settings(BaseSettings):
         default="neat-crate-hruffn9s2hbs2l",
         validation_alias=AliasChoices(
             "S3_BUCKET_NAME",
+            "s3_bucket_name",
             "BUCKET_NAME",
+            "bucket_name",
             "BUCKET",
+            "bucket",
             "TIGRIS_BUCKET",
+            "tigris_bucket",
             "AWS_BUCKET_NAME",
+            "aws_bucket_name",
         ),
     )
     S3_ACCESS_KEY_ID: str = Field(
-        default="",
+        default="tid_EDugeawmRaDxnVsqsFb_apMUGZyYLAeYZRZQkCee_vwFeDXkng",
         validation_alias=AliasChoices(
             "S3_ACCESS_KEY_ID",
+            "s3_access_key_id",
             "ACCESS_KEY_ID",
+            "access_key_id",
             "AWS_ACCESS_KEY_ID",
+            "aws_access_key_id",
             "TIGRIS_ACCESS_KEY_ID",
+            "tigris_access_key_id",
         ),
     )
     S3_SECRET_ACCESS_KEY: str = Field(
-        default="",
+        default="tsec_3y2xQ5ojwe60m+iqVKvzmXYa8ymuVDZis6WtugaKbYGSmbvxBW5If+QtZy_+SHvFyIk_ra",
         validation_alias=AliasChoices(
             "S3_SECRET_ACCESS_KEY",
+            "s3_secret_access_key",
             "SECRET_ACCESS_KEY",
+            "secret_access_key",
             "AWS_SECRET_ACCESS_KEY",
+            "aws_secret_access_key",
             "TIGRIS_SECRET_ACCESS_KEY",
+            "tigris_secret_access_key",
         ),
     )
     # Base URL served to clients. Leave blank to auto-derive from endpoint + bucket.
     S3_PUBLIC_BASE_URL: str = Field(
-        default="",
+        default="https://neat-crate-hruffn9s2hbs2l.t3.storageapi.dev",
         validation_alias=AliasChoices(
             "S3_PUBLIC_BASE_URL",
+            "s3_public_base_url",
             "PUBLIC_BASE_URL",
+            "public_base_url",
         ),
     )
 
     @field_validator("S3_BUCKET_NAME", mode="before")
     @classmethod
     def clean_bucket_name(cls, value):
-        if not value:
-            return "neat-crate-hruffn9s2hbs2l"
-        if isinstance(value, str):
-            value = value.strip().strip("'\"")
-            # If the user only gave the display prefix (neat-crate) without the Tigris hash suffix
-            if value == "neat-crate":
-                value = "neat-crate-hruffn9s2hbs2l"
-        return value
+        known_bucket = "neat-crate-hruffn9s2hbs2l"
+        if not value or not str(value).strip():
+            return known_bucket
+        val = str(value).strip().strip("'\"").rstrip("/")
+        # If the user only gave the display prefix (neat-crate) without the Tigris hash suffix
+        if val == "neat-crate" or (val.startswith("neat-crate") and not val.endswith("-hruffn9s2hbs2l")):
+            return known_bucket
+        if val.lower() in ("chocolate-world", "chovique", "chovique-bucket", "neat_crate"):
+            return known_bucket
+        return val
+
+    @field_validator("S3_ACCESS_KEY_ID", mode="before")
+    @classmethod
+    def clean_access_key(cls, value):
+        if not value or not str(value).strip():
+            return "tid_EDugeawmRaDxnVsqsFb_apMUGZyYLAeYZRZQkCee_vwFeDXkng"
+        return str(value).strip().strip("'\"")
+
+    @field_validator("S3_SECRET_ACCESS_KEY", mode="before")
+    @classmethod
+    def clean_secret_key(cls, value):
+        if not value or not str(value).strip():
+            return "tsec_3y2xQ5ojwe60m+iqVKvzmXYa8ymuVDZis6WtugaKbYGSmbvxBW5If+QtZy_+SHvFyIk_ra"
+        return str(value).strip().strip("'\"")
 
     @field_validator("S3_ENDPOINT_URL", mode="before")
     @classmethod

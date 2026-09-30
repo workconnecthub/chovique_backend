@@ -215,6 +215,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files for local uploads fallback
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+static_dir = Path("static")
+static_dir.mkdir(exist_ok=True)
+(static_dir / "uploads").mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
 app.include_router(api_router)
 
 
