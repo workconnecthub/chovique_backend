@@ -190,6 +190,52 @@ class CustomerUpdatePayload(BaseModel):
         return cleaned
 
 
+class CreateCustomerRequest(BaseModel):
+    full_name: str
+    email: str
+    phone: Optional[str] = None
+    password: Optional[str] = "Customer@123"
+    gender: Optional[str] = None
+    house_number: Optional[str] = None
+    street: Optional[str] = None
+    area: Optional[str] = None
+    landmark: Optional[str] = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    zip: Optional[str] = None
+    is_active: bool = True
+
+    @field_validator("full_name")
+    @classmethod
+    def validate_full_name(cls, v: str) -> str:
+        v_clean = v.strip()
+        if len(v_clean) < 2:
+            raise ValueError("Full name must be at least 2 characters.")
+        return v_clean
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        v_clean = v.strip().lower()
+        if not EMAIL_REGEX.match(v_clean):
+            raise ValueError("Please provide a valid email address.")
+        return v_clean
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def validate_and_normalize_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not str(v).strip():
+            return None
+        v_trimmed = str(v).strip()
+        if not PHONE_REGEX.match(v_trimmed):
+            raise ValueError("Please provide a valid phone number (e.g. +91 9876543210 or 9876543210).")
+        return re.sub(r"[^\d+]", "", v_trimmed)
+
+
+
 class UpdateOrderStatusPayload(BaseModel):
     status: Optional[str] = None      # Order Status: Pending / Confirmed / Processing / Shipped / Out for Delivery / Delivered / Cancelled / Returned
     payment_status: Optional[str] = None  # Payment Status: Pending / Processing / Paid / Failed / Cancelled / Refund Pending / Refunded / Partially Refunded
@@ -272,6 +318,9 @@ class OrderSummaryStats(BaseModel):
     refund_pending: int = 0
     partially_refunded: int = 0
     total_revenue: float = 0.0  # Sum of non-cancelled orders
+    local_orders: int = 0
+    courier_orders: int = 0
+    unassigned_local: int = 0
 
 
 class AdminOrderListResponse(BaseModel):
@@ -478,21 +527,25 @@ class CreateTestimonialRequest(BaseModel):
 
 class CreateReelRequest(BaseModel):
     video_url: Optional[str] = None
-    likes: str = "0"
-    comments: str = "0"
-    views: str = "0 views"
-    title: str
+    instagram_url: Optional[str] = None
+    account_name: Optional[str] = "@chovique_chocolatier"
+    likes: Optional[str] = "0"
+    comments: Optional[str] = "0"
+    views: Optional[str] = "0 views"
+    title: Optional[str] = "Instagram Reel"
     sort_order: int = 0
     is_active: bool = True
 
 
 class ReelResponse(BaseModel):
     id: str
-    videoUrl: str
-    likes: str
-    comments: str
-    views: str
-    title: str
+    videoUrl: Optional[str] = None
+    instagramUrl: Optional[str] = None
+    accountName: Optional[str] = "@chovique_chocolatier"
+    likes: Optional[str] = "0"
+    comments: Optional[str] = "0"
+    views: Optional[str] = "0 views"
+    title: Optional[str] = "Instagram Reel"
 
 
 # ======================================================

@@ -108,23 +108,36 @@ class CheckoutService:
                 coins_used = redemption_calc.allowed_coins
                 coin_discount = redemption_calc.coin_discount
 
-        # Step 4: Calculate shipping & tax using PlatformSettings
+        # Step 4: Validate serviceability & calculate authoritative shipping fee
+        from app.services.fulfillment_routing_service import FulfillmentRoutingService
         from app.repositories.platform_settings_repository import PlatformSettingsRepository
+
+        shipping_addr_dict = payload.shipping_address.model_dump()
+        dest_pincode = shipping_addr_dict.get("zip") or ""
+
+        routing_service = FulfillmentRoutingService(self.db)
+        shipping_res = await routing_service.calculate_shipping(
+            pincode=dest_pincode,
+            cart_total=subtotal,
+            city=shipping_addr_dict.get("city"),
+            state=shipping_addr_dict.get("state"),
+            latitude=shipping_addr_dict.get("latitude"),
+            longitude=shipping_addr_dict.get("longitude"),
+        )
+
+        if not shipping_res.serviceable:
+            raise ValueError(shipping_res.message or "Sorry, delivery is currently unavailable for this location.")
+
+        shipping = float(shipping_res.delivery_charge)
         ps_repo = PlatformSettingsRepository(self.db)
         ps = await ps_repo.get()
-
-        if ps.free_shipping_min_order > 0 and subtotal >= ps.free_shipping_min_order:
-            shipping = 0.0
-        else:
-            shipping = ps.standard_shipping_charge
 
         tax = round(subtotal * (ps.gst_rate / 100.0), 2)
         total_discount = discount + coin_discount
         total = max(0.0, subtotal - total_discount + shipping + tax)
         total_rounded = round(total, 2)
 
-        # Step 5: Create Pending Order in DB
-        shipping_addr_dict = payload.shipping_address.model_dump()
+        # Step 5: Create Pending Order in DB with authoritative snapshot
         order = await self.order_repo.create_order(
             user_id=user_id,
             total=total_rounded,
@@ -133,14 +146,20 @@ class CheckoutService:
             shipping=round(shipping, 2),
             tax=round(tax, 2),
             shipping_address=shipping_addr_dict,
-            delivery_option=payload.delivery_option,
+            delivery_option=payload.delivery_option or f"{shipping_res.fulfillment_type.capitalize()} Delivery",
             payment_method=payload.payment_method,
             items_data=items_data,
             coupon_code=payload.coupon_code if discount > 0 else None,
             coupon_discount=round(discount, 2),
             coins_used=coins_used,
             coin_discount=round(coin_discount, 2),
+            fulfillment_type=shipping_res.fulfillment_type,
+            shipping_provider=shipping_res.shipping_provider,
+            fulfillment_status="UNASSIGNED",
+            store_location_id=shipping_res.origin_store_id,
+            shipping_snapshot=shipping_addr_dict,
         )
+
 
         # Step 6: Initiate Razorpay Order
         razorpay_order = razorpay_client.create_order(

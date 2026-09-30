@@ -74,9 +74,17 @@ class OrderRepository:
         coin_discount: float = 0.0,
         coins_earned: int = 0,
         payment_status: str = "PENDING",
+        fulfillment_type: str = "LOCAL",
+        shipping_provider: str = "INTERNAL",
+        fulfillment_status: str = "UNASSIGNED",
+        delivery_boy_id: str | None = None,
+        store_location_id: str | None = None,
+        shipping_snapshot: dict | None = None,
         commit: bool = True,
     ) -> Order:
         order_id = await self.generate_next_order_id()
+        snap = shipping_snapshot or (shipping_address if isinstance(shipping_address, dict) else {})
+
         order = Order(
             id=order_id,
             user_id=user_id,
@@ -96,6 +104,31 @@ class OrderRepository:
             status="Processing",
             payment_status=payment_status,
             paid_at=func.now() if payment_status.upper() == "PAID" else None,
+            # Dual-Mode Fulfillment & Logistics
+            store_location_id=store_location_id,
+            fulfillment_type=fulfillment_type or "LOCAL",
+            shipping_provider=shipping_provider or "INTERNAL",
+            fulfillment_status=fulfillment_status or "UNASSIGNED",
+            delivery_boy_id=delivery_boy_id,
+            # Authoritative Immutable Shipping Snapshot
+            shipping_name=snap.get("name") or snap.get("full_name"),
+            shipping_phone=snap.get("phone"),
+            shipping_house_number=snap.get("house_number"),
+            shipping_street=snap.get("street"),
+            shipping_area=snap.get("area"),
+            shipping_landmark=snap.get("landmark"),
+            shipping_city=snap.get("city"),
+            shipping_district=snap.get("district"),
+            shipping_state=snap.get("state"),
+            shipping_pincode=snap.get("zip") or snap.get("pincode") or snap.get("zip_code"),
+            shipping_latitude=snap.get("latitude"),
+            shipping_longitude=snap.get("longitude"),
+            shipping_formatted_address=snap.get("formatted_address"),
+            shipping_google_place_id=snap.get("google_place_id"),
+            shipping_location_source=snap.get("location_source") or "MANUAL",
+            shipping_location_verified=bool(snap.get("location_verified", False)),
+            shipping_delivery_charge=shipping,
+            shipping_confirmed_at=func.now(),
         )
         self.db.add(order)
         await self.db.flush()
@@ -177,6 +210,7 @@ class OrderRepository:
         *,
         status: Optional[str] = None,
         payment_status: Optional[str] = None,
+        fulfillment_type: Optional[str] = None,
         search: Optional[str] = None,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
@@ -197,12 +231,17 @@ class OrderRepository:
             else:
                 query = query.where(func.lower(Order.payment_status) == p_val)
 
+        if fulfillment_type and fulfillment_type.upper() != "ALL":
+            query = query.where(func.upper(Order.fulfillment_type) == fulfillment_type.upper())
+
         if search and search.strip():
             like = f"%{search.strip().lower()}%"
             query = query.where(
                 or_(
                     func.lower(Order.id).like(like),
                     func.lower(cast(Order.shipping_address, type_=Text)).like(like),
+                    func.lower(Order.shipping_name).like(like),
+                    func.lower(Order.shipping_phone).like(like),
                 )
             )
 
@@ -218,6 +257,7 @@ class OrderRepository:
         *,
         status: Optional[str] = None,
         payment_status: Optional[str] = None,
+        fulfillment_type: Optional[str] = None,
         search: Optional[str] = None,
         date_from: Optional[date] = None,
         date_to: Optional[date] = None,
@@ -236,6 +276,7 @@ class OrderRepository:
             "total": Order.total,
             "status": Order.status,
             "payment_status": Order.payment_status,
+            "fulfillment_type": Order.fulfillment_type,
         }
         sort_col = SORTABLE.get(sort_by, Order.created_at)
         sort_expr = sort_col.asc() if sort_order.lower() == "asc" else sort_col.desc()
@@ -244,6 +285,7 @@ class OrderRepository:
             select(func.count()).select_from(Order),
             status=status,
             payment_status=payment_status,
+            fulfillment_type=fulfillment_type,
             search=search,
             date_from=date_from,
             date_to=date_to,
@@ -253,10 +295,13 @@ class OrderRepository:
 
         data_q = self._build_admin_filter(
             select(Order).options(
-                selectinload(Order.items).selectinload(OrderItem.product)
+                selectinload(Order.items).selectinload(OrderItem.product),
+                selectinload(Order.delivery_boy),
+                selectinload(Order.store_location),
             ),
             status=status,
             payment_status=payment_status,
+            fulfillment_type=fulfillment_type,
             search=search,
             date_from=date_from,
             date_to=date_to,
@@ -272,7 +317,7 @@ class OrderRepository:
 
     async def admin_count_summary(self) -> dict:
         """
-        Return KPI counts for all fulfillment/payment statuses and total revenue.
+        Return KPI counts for all fulfillment/payment statuses, local/courier split, and total revenue.
         Used to populate the summary block in AdminOrderListResponse.
         """
         fulfillment_q = await self.db.execute(
@@ -296,6 +341,27 @@ class OrderRepository:
         total_orders_q = await self.db.execute(select(func.count()).select_from(Order))
         total_orders = total_orders_q.scalar_one()
 
+        # Local vs Courier orders count
+        local_orders_q = await self.db.execute(
+            select(func.count(Order.id)).where(func.upper(Order.fulfillment_type) == "LOCAL")
+        )
+        local_orders = local_orders_q.scalar_one()
+
+        courier_orders_q = await self.db.execute(
+            select(func.count(Order.id)).where(func.upper(Order.fulfillment_type) == "COURIER")
+        )
+        courier_orders = courier_orders_q.scalar_one()
+
+        # Unassigned local orders (active orders needing delivery executive assignment)
+        unassigned_local_q = await self.db.execute(
+            select(func.count(Order.id)).where(
+                func.upper(Order.fulfillment_type) == "LOCAL",
+                (Order.delivery_boy_id.is_(None)) | (Order.fulfillment_status.in_(["UNASSIGNED", "REJECTED"])),
+                Order.status.notin_(["Delivered", "Cancelled", "Returned"]),
+            )
+        )
+        unassigned_local = unassigned_local_q.scalar_one()
+
         out_for_delivery_cnt = f_counts_lower.get("out_for_delivery", 0) + f_counts_lower.get("out for delivery", 0)
         refund_pending_cnt = p_counts_lower.get("refund pending", 0) + p_counts_lower.get("refund_pending", 0)
         partially_refunded_cnt = p_counts_lower.get("partially refunded", 0) + p_counts_lower.get("partially_refunded", 0)
@@ -317,4 +383,7 @@ class OrderRepository:
             "refund_pending": refund_pending_cnt,
             "partially_refunded": partially_refunded_cnt,
             "total_revenue": total_revenue,
+            "local_orders": local_orders,
+            "courier_orders": courier_orders,
+            "unassigned_local": unassigned_local,
         }

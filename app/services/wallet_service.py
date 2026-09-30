@@ -19,7 +19,7 @@ DEFAULT_REWARD_SETTINGS = {
     "spend_per_coin": 10.0,
     "coins_per_rupee": 10.0,
     "max_redemption_percentage": 20.0,
-    "welcome_coins": 100,
+    "welcome_coins": 200,
     "first_order_coins": 200,
     "credit_delay_hours": 24,
     "per_order_coins_fixed": 0,
@@ -77,18 +77,20 @@ class WalletService:
             if t_dt and t_dt.tzinfo is None:
                 t_dt = t_dt.replace(tzinfo=timezone.utc)
 
-            is_order_earn = t_type in ("EARN", "ORDER_REWARD", "FIRST_ORDER_BONUS") and t.order_id
-            if is_order_earn:
+            is_welcome = t_type in ("WELCOME", "WELCOME_BONUS", "ACCOUNT_CREATION", "REGISTRATION_BONUS") or "welcome" in (t.description or "").lower()
+            is_order_earn = (t_type in ("EARN", "ORDER_REWARD", "FIRST_ORDER_BONUS") or bool(t.order_id)) and not is_welcome
+
+            if is_welcome:
+                if t.coins > 0:
+                    earned += t.coins
+                available += t.coins
+            elif is_order_earn:
                 if t.coins > 0:
                     earned += t.coins
                 if t_dt and (now_utc < t_dt + timedelta(hours=delay_hours)):
                     pending += max(0, t.coins)
                 else:
                     available += t.coins
-            elif t_type in ("WELCOME", "ACCOUNT_CREATION"):
-                if t.coins > 0:
-                    earned += t.coins
-                available += t.coins
             elif t_type in ("REFUND", "RETURN", "COIN_RETURN"):
                 if t.coins > 0:
                     returned += t.coins
@@ -126,10 +128,67 @@ class WalletService:
         }
 
     async def get_user_wallet_details(self, user_id: str) -> UserWalletResponse:
+        from datetime import datetime, timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
         wallet = await self.wallet_repo.get_or_create_wallet(user_id)
         settings = await self.get_reward_settings()
+        transactions = await self.wallet_repo.get_transactions(user_id, limit=50)
+
+        # Auto-grant 200 Welcome Coins for any registered customer who has no welcome bonus yet
+        has_welcome = any(
+            (t.type or "").upper() in ("WELCOME", "WELCOME_BONUS", "ACCOUNT_CREATION")
+            or "welcome" in (t.description or "").lower()
+            for t in transactions
+        )
+        if not has_welcome and settings.reward_system_enabled and settings.welcome_coins > 0:
+            await self.wallet_repo.add_transaction(
+                user_id=user_id,
+                transaction_type="WELCOME",
+                coins=settings.welcome_coins,
+                description="Welcome Bonus — Registration Reward",
+                commit=True,
+            )
+            transactions = await self.wallet_repo.get_transactions(user_id, limit=50)
+
         summary = await self.compute_user_coin_summary(user_id)
-        transactions = await self.wallet_repo.get_transactions(user_id, limit=20)
+        delay_hours = getattr(settings, "credit_delay_hours", 24) or 24
+
+        formatted_txs = []
+        for t in transactions:
+            t_type = (t.type or "").upper()
+            t_dt = t.created_at
+            if t_dt and t_dt.tzinfo is None:
+                t_dt = t_dt.replace(tzinfo=timezone.utc)
+
+            is_welcome = t_type in ("WELCOME", "WELCOME_BONUS", "ACCOUNT_CREATION") or "welcome" in (t.description or "").lower()
+            is_order_earn = (t_type in ("EARN", "ORDER_REWARD", "FIRST_ORDER_BONUS") or bool(t.order_id)) and not is_welcome
+
+            status = "AVAILABLE"
+            is_pending = False
+            unlocks_at = None
+
+            if is_order_earn and t_dt:
+                target_unlock = t_dt + timedelta(hours=delay_hours)
+                if now_utc < target_unlock:
+                    status = "PENDING"
+                    is_pending = True
+                    unlocks_at = target_unlock
+
+            formatted_txs.append(
+                CoinTransactionResponse(
+                    id=t.id,
+                    user_id=t.user_id,
+                    order_id=t.order_id,
+                    type="WELCOME" if is_welcome else t.type,
+                    coins=t.coins,
+                    description=t.description,
+                    created_at=t.created_at,
+                    status=status,
+                    is_pending=is_pending,
+                    unlocks_at=unlocks_at,
+                    delay_hours=delay_hours,
+                )
+            )
 
         rupee_val = round(summary["available_coins"] / settings.coins_per_rupee, 2) if settings.coins_per_rupee > 0 else 0.0
 
@@ -141,7 +200,7 @@ class WalletService:
             pending_coins=summary["pending_coins"],
             rupee_value=rupee_val,
             settings=settings,
-            recent_transactions=[CoinTransactionResponse.model_validate(t) for t in transactions],
+            recent_transactions=formatted_txs,
         )
 
     async def calculate_redemption(

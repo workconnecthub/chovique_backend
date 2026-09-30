@@ -80,16 +80,174 @@ async def lifespan(app: FastAPI):
                     # UPI QR Code payment support
                     await autocommit_conn.execute(text("ALTER TABLE payments ADD COLUMN IF NOT EXISTS qr_code_id VARCHAR(100);"))
                     await autocommit_conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_payments_qr_code_id ON payments (qr_code_id) WHERE qr_code_id IS NOT NULL;"))
-                except Exception as ex:
-                    logger.warning("Auto migration note: %s", ex)
-                logger.info("Database auto-migrations executed successfully.")
+                    # Customer Address V2 fields
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS house_number VARCHAR(100);"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS area VARCHAR(150);"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS landmark VARCHAR(150);"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS district VARCHAR(100);"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS formatted_address VARCHAR(500);"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS google_place_id VARCHAR(255);"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS location_source VARCHAR(50) DEFAULT 'MANUAL';"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS location_verified BOOLEAN DEFAULT FALSE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE customer_addresses ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE;"))
+
+                    # Orders Dual-Mode Fulfillment & Authoritative Snapshot fields
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS store_location_id VARCHAR(36);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS fulfillment_type VARCHAR(50) DEFAULT 'LOCAL';"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_provider VARCHAR(50) DEFAULT 'INTERNAL';"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS fulfillment_status VARCHAR(50) DEFAULT 'UNASSIGNED';"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_boy_id VARCHAR(36);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_name VARCHAR(120);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_phone VARCHAR(30);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_house_number VARCHAR(100);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_street VARCHAR(255);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_area VARCHAR(150);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_landmark VARCHAR(150);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_city VARCHAR(100);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_district VARCHAR(100);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_state VARCHAR(100);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_pincode VARCHAR(20);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_latitude DOUBLE PRECISION;"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_longitude DOUBLE PRECISION;"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_formatted_address VARCHAR(500);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_google_place_id VARCHAR(255);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_location_source VARCHAR(50);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_location_verified BOOLEAN DEFAULT FALSE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_delivery_charge DOUBLE PRECISION;"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_confirmed_at TIMESTAMP WITH TIME ZONE;"))
+                    # Delivery Boy OTP & workflow fields
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_otp VARCHAR(6);"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_otp_expires_at TIMESTAMP WITH TIME ZONE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_accepted_at TIMESTAMP WITH TIME ZONE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_rejected_at TIMESTAMP WITH TIME ZONE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_rejection_reason TEXT;"))
+                    await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_picked_at TIMESTAMP WITH TIME ZONE;"))
+                    # Add delivery_boy to the user_role enum if not present
+                    try:
+                        await autocommit_conn.execute(text("ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'delivery_boy';"))
+                    except Exception:
+                        pass
+                except Exception as e:
+                    logger.warning("Inner column migration note: %s", e)
+
     except Exception as e:
         logger.warning("Database migration note: %s", e)
 
+    # Seed default logistics configuration (Primary store & Local delivery service areas)
+    try:
+        from app.models.store_location import StoreLocation
+        from app.models.delivery_service_area import DeliveryServiceArea
+        from sqlalchemy import select
 
+        async with AsyncSessionLocal() as db:
+            # 1. Primary Store Location
+            store_res = await db.execute(select(StoreLocation).limit(1))
+            primary_store = store_res.scalars().first()
+            if not primary_store:
+                primary_store = StoreLocation(
+                    name="Chovique Flagship Store",
+                    house_number="Plot 42",
+                    street="Sector 1, MVP Colony",
+                    area="MVP Colony",
+                    city="Visakhapatnam",
+                    district="Visakhapatnam",
+                    state="Andhra Pradesh",
+                    pincode="530017",
+                    latitude=17.7412,
+                    longitude=83.3364,
+                    formatted_address="Plot 42, Sector 1, MVP Colony, Visakhapatnam, Andhra Pradesh 530017",
+                    phone="+91 891 2345678",
+                    is_primary=True,
+                    active=True,
+                )
+                db.add(primary_store)
+                await db.flush()
+                logger.info("Seeded primary store location: %s", primary_store.name)
 
+            # 2. Local Delivery Service Areas
+            area_res = await db.execute(select(DeliveryServiceArea).limit(1))
+            if not area_res.scalars().first():
+                default_areas = [
+                    DeliveryServiceArea(
+                        store_location_id=primary_store.id,
+                        pincode="530017",
+                        city="Visakhapatnam",
+                        district="Visakhapatnam",
+                        state="Andhra Pradesh",
+                        delivery_mode="LOCAL",
+                        delivery_charge=40.0,
+                        free_delivery_threshold=1000.0,
+                        same_day_available=True,
+                        estimated_delivery="Within 2-3 hours (Same Day)",
+                        active=True,
+                    ),
+                    DeliveryServiceArea(
+                        store_location_id=primary_store.id,
+                        pincode="530003",
+                        city="Visakhapatnam",
+                        district="Visakhapatnam",
+                        state="Andhra Pradesh",
+                        delivery_mode="LOCAL",
+                        delivery_charge=40.0,
+                        free_delivery_threshold=1000.0,
+                        same_day_available=True,
+                        estimated_delivery="Within 3-4 hours (Same Day)",
+                        active=True,
+                    ),
+                    DeliveryServiceArea(
+                        store_location_id=primary_store.id,
+                        pincode="530020",
+                        city="Visakhapatnam",
+                        district="Visakhapatnam",
+                        state="Andhra Pradesh",
+                        delivery_mode="LOCAL",
+                        delivery_charge=40.0,
+                        free_delivery_threshold=1000.0,
+                        same_day_available=True,
+                        estimated_delivery="Within 3-4 hours (Same Day)",
+                        active=True,
+                    ),
+                    DeliveryServiceArea(
+                        store_location_id=primary_store.id,
+                        pincode="530002",
+                        city="Visakhapatnam",
+                        district="Visakhapatnam",
+                        state="Andhra Pradesh",
+                        delivery_mode="LOCAL",
+                        delivery_charge=50.0,
+                        free_delivery_threshold=1200.0,
+                        same_day_available=True,
+                        estimated_delivery="Within 4-5 hours (Same Day)",
+                        active=True,
+                    ),
+                    DeliveryServiceArea(
+                        store_location_id=primary_store.id,
+                        pincode="530045",
+                        city="Visakhapatnam",
+                        district="Visakhapatnam",
+                        state="Andhra Pradesh",
+                        delivery_mode="LOCAL",
+                        delivery_charge=60.0,
+                        free_delivery_threshold=1500.0,
+                        same_day_available=True,
+                        estimated_delivery="Within 4-6 hours (Same Day)",
+                        active=True,
+                    ),
+                ]
+                db.add_all(default_areas)
+                logger.info("Seeded %d default local delivery service areas.", len(default_areas))
+    except Exception as e:
+        logger.warning("Logistics default seeding note: %s", e)
 
-
+    # Seed superadmin user
+    try:
+        from app.services.superadmin_service import ensure_superadmin_exists
+        async with AsyncSessionLocal() as db:
+            await ensure_superadmin_exists(db)
+    except Exception as e:
+        logger.warning("Superadmin auto-seed note: %s", e)
 
     logger.info("Application startup complete.")
     yield

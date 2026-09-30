@@ -221,6 +221,43 @@ class StorageService:
         key = self._build_key(folder, filename)
         return self._upload_to_s3(file_bytes, key, content_type)
 
+    async def upload_from_url(
+        self,
+        image_url: str,
+        folder: str = "chocolate-world/avatars",
+    ) -> str:
+        """
+        Download an image from a URL (e.g. Google profile DP) and upload to S3/Tigris Railway bucket.
+        Returns the permanent public URL.
+        """
+        if not image_url or not (image_url.startswith("http://") or image_url.startswith("https://")):
+            return image_url
+
+        import httpx
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            }
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
+                resp = await client.get(image_url)
+                if resp.status_code == 200 and resp.content:
+                    content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+                    ext = "jpg"
+                    if "png" in content_type:
+                        ext = "png"
+                    elif "webp" in content_type:
+                        ext = "webp"
+                    key = self._build_key(folder, f"avatar.{ext}")
+                    url = self._upload_to_s3(resp.content, key, content_type)
+                    logger.info("Successfully mirrored external image '%s' to Railway bucket: %s", image_url, url)
+                    return url
+                else:
+                    logger.warning("Failed to fetch image from URL '%s': HTTP %d", image_url, resp.status_code)
+        except Exception as e:
+            logger.warning("Failed to download and upload avatar from URL '%s': %s", image_url, e)
+        return image_url
+
     def delete_media(self, public_id: str, resource_type: str = "image") -> bool:
         """
         Delete an object from S3.

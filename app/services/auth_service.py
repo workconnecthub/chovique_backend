@@ -166,18 +166,20 @@ class AuthService:
             is_active=True,
         )
 
-        # Grant Welcome Coins
+        # Grant Welcome Coins (200 coins immediately available in customer wallet)
         from app.services.wallet_service import WalletService
         wallet_service = WalletService(self.db)
         reward_settings = await wallet_service.get_reward_settings()
-        if reward_settings.reward_system_enabled and reward_settings.welcome_coins > 0:
+        welcome_amt = getattr(reward_settings, "welcome_coins", 200) or 200
+        if reward_settings.reward_system_enabled and welcome_amt > 0:
             await wallet_service.wallet_repo.add_transaction(
                 user_id=str(user.id),
-                transaction_type="EARN",
-                coins=reward_settings.welcome_coins,
-                description="Welcome Bonus",
+                transaction_type="WELCOME",
+                coins=welcome_amt,
+                description="Welcome Bonus — Registration Reward",
                 commit=True
             )
+            await wallet_service.compute_user_coin_summary(str(user.id))
 
 
         # Generate tokens
@@ -495,6 +497,19 @@ class AuthService:
             google_user["google_id"]
         )
 
+        # Ensure Google DP is saved into the Railway S3/Tigris bucket
+        raw_avatar = google_user.get("avatar_url")
+        if raw_avatar and ("googleusercontent.com" in raw_avatar or raw_avatar.startswith("http")):
+            from app.services.storage_service import storage_service
+            try:
+                bucket_avatar_url = await storage_service.upload_from_url(
+                    raw_avatar, folder="chocolate-world/avatars"
+                )
+                if bucket_avatar_url and "googleusercontent.com" not in bucket_avatar_url:
+                    google_user["avatar_url"] = bucket_avatar_url
+            except Exception as e:
+                logger.warning("Failed to store Google avatar in Railway bucket: %s", e)
+
         # 2. If not found by google_id, check by email
         if not user:
             user = await self.user_repo.get_by_email(
@@ -510,7 +525,7 @@ class AuthService:
                 user.google_id = google_user["google_id"]
 
         else:
-            # Existing Google user - ensure latest Google profile DP is synced if not using custom uploaded avatar
+            # Existing Google user - ensure latest Google profile DP is synced in Railway bucket
             if google_user.get("avatar_url") and (not user.avatar_url or "googleusercontent.com" in user.avatar_url):
                 user.avatar_url = google_user["avatar_url"]
                 await self.user_repo.update_google_data(
@@ -520,17 +535,35 @@ class AuthService:
                 )
 
         # 3. First time Google user (neither google_id nor email exists)
+        is_new_user = False
         if not user:
+            is_new_user = True
             user = await self.user_repo.create(
                 full_name=google_user["full_name"],
                 email=google_user["email"],
                 hashed_password=None,
                 google_id=google_user["google_id"],
-                avatar_url=google_user["avatar_url"],
+                avatar_url=google_user.get("avatar_url"),
                 role="customer",
                 is_email_verified=True,
                 is_active=True,
             )
+
+        # Grant 200 Welcome Coins immediately upon Google new registration
+        if is_new_user:
+            from app.services.wallet_service import WalletService
+            wallet_service = WalletService(self.db)
+            reward_settings = await wallet_service.get_reward_settings()
+            welcome_amt = getattr(reward_settings, "welcome_coins", 200) or 200
+            if reward_settings.reward_system_enabled and welcome_amt > 0:
+                await wallet_service.wallet_repo.add_transaction(
+                    user_id=str(user.id),
+                    transaction_type="WELCOME",
+                    coins=welcome_amt,
+                    description="Welcome Bonus — Registration Reward",
+                    commit=True,
+                )
+                await wallet_service.compute_user_coin_summary(str(user.id))
 
 
 

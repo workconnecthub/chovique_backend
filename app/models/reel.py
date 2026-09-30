@@ -8,11 +8,13 @@ class InstagramReel(Base):
     __tablename__ = "instagram_reels"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    video_url = Column(String(500), nullable=False)
-    likes = Column(String(20), default="0", nullable=False)
-    comments = Column(String(20), default="0", nullable=False)
-    views = Column(String(20), default="0 views", nullable=False)
-    title = Column(String(255), nullable=False)
+    video_url = Column(String(500), nullable=True)
+    instagram_url = Column(String(500), nullable=True)
+    account_name = Column(String(100), default="@chovique_chocolatier", nullable=True)
+    likes = Column(String(20), default="0", nullable=True)
+    comments = Column(String(20), default="0", nullable=True)
+    views = Column(String(20), default="0 views", nullable=True)
+    title = Column(String(255), default="Instagram Reel", nullable=True)
     sort_order = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
 

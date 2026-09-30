@@ -40,13 +40,37 @@ class ReviewRepository:
         await self.db.commit()
         return result.rowcount > 0
 
-    async def get_all(self, limit: int = 100) -> list[ProductReview]:
+    async def update_status(self, review_id: str, status: str, is_featured_on_home: bool | None = None) -> ProductReview | None:
+        review = await self.get_by_id(review_id)
+        if not review:
+            return None
+        review.status = status
+        if is_featured_on_home is not None:
+            review.is_featured_on_home = is_featured_on_home
+        await self.db.commit()
+        await self.db.refresh(review)
+        return review
+
+    async def get_featured_on_home(self, limit: int = 10) -> list[ProductReview]:
+        from sqlalchemy.orm import joinedload
         result = await self.db.execute(
             select(ProductReview)
+            .options(joinedload(ProductReview.product))
+            .where(ProductReview.status == "approved", ProductReview.is_featured_on_home == True)
             .order_by(ProductReview.created_at.desc())
             .limit(limit)
         )
-        return list(result.scalars().all())
+        return list(result.scalars().unique().all())
+
+    async def get_all(self, limit: int = 100) -> list[ProductReview]:
+        from sqlalchemy.orm import joinedload
+        result = await self.db.execute(
+            select(ProductReview)
+            .options(joinedload(ProductReview.product))
+            .order_by(ProductReview.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().unique().all())
 
     async def user_has_reviewed_product(self, user_id: str, product_id: str) -> bool:
         if not user_id:

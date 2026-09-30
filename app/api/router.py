@@ -14,6 +14,7 @@ from app.api.v1 import (
     contact,
     coupons,
     customer,
+    delivery_boy,
     home,
     orders,
     payments,
@@ -34,6 +35,8 @@ from app.api.v1 import (
     superadmin_platform_settings,
     superadmin_notifications,
     media_proxy,
+    shipping,
+    superadmin_logistics,
 )
 from app.core.config import settings
 
@@ -51,6 +54,7 @@ api_router.include_router(wallet.router)
 api_router.include_router(checkout.router)
 api_router.include_router(payments.router)
 api_router.include_router(orders.router)
+api_router.include_router(shipping.router)
 api_router.include_router(webhooks.router)
 api_router.include_router(refunds.router)
 api_router.include_router(tickets.router)
@@ -68,4 +72,10 @@ api_router.include_router(superadmin_audit_logs.router)
 api_router.include_router(superadmin_theme.router)
 api_router.include_router(superadmin_platform_settings.router)
 api_router.include_router(superadmin_notifications.router)
+api_router.include_router(superadmin_logistics.router)
 api_router.include_router(theme.router, prefix="/theme", tags=["Theme Builder"])
+
+# Delivery Boy panel + Admin delivery management
+api_router.include_router(delivery_boy.router)
+api_router.include_router(delivery_boy.admin_router)
+

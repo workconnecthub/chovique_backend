@@ -181,52 +181,50 @@ class CustomerService:
     # Addresses
     # ==========================================================
 
+    def _format_address_response(self, a) -> CustomerAddressResponse:
+        return CustomerAddressResponse(
+            id=str(a.id),
+            title=a.title,
+            name=a.name,
+            house_number=getattr(a, "house_number", None),
+            street=a.street,
+            area=getattr(a, "area", None),
+            landmark=getattr(a, "landmark", None),
+            city=a.city,
+            district=getattr(a, "district", None),
+            state=a.state,
+            zip=a.zip,
+            phone=a.phone,
+            latitude=getattr(a, "latitude", None),
+            longitude=getattr(a, "longitude", None),
+            formatted_address=getattr(a, "formatted_address", None),
+            google_place_id=getattr(a, "google_place_id", None),
+            location_source=getattr(a, "location_source", "MANUAL") or "MANUAL",
+            location_verified=bool(getattr(a, "location_verified", False)),
+            isDefault=bool(a.is_default),
+            created_at=getattr(a, "created_at", None),
+            updated_at=getattr(a, "updated_at", None),
+        )
+
     async def get_addresses(self, user_id: str) -> list[CustomerAddressResponse]:
         addresses = await self.address_repo.get_user_addresses(user_id)
-        return [
-            CustomerAddressResponse(
-                id=a.id,
-                title=a.title,
-                name=a.name,
-                street=a.street,
-                city=a.city,
-                state=a.state,
-                zip=a.zip,
-                phone=a.phone,
-                isDefault=a.is_default,
-            )
-            for a in addresses
-        ]
+        return [self._format_address_response(a) for a in addresses]
 
     async def add_address(
         self,
         user_id: str,
         payload: CustomerAddressCreate,
     ) -> CustomerAddressResponse:
+        create_data = payload.model_dump()
+        if "isDefault" in create_data:
+            create_data["is_default"] = create_data.pop("isDefault")
 
         addr = await self.address_repo.create(
             user_id=user_id,
-            title=payload.title,
-            name=payload.name,
-            street=payload.street,
-            city=payload.city,
-            state=payload.state,
-            zip=payload.zip,
-            phone=payload.phone,
-            is_default=payload.isDefault,
+            **create_data,
         )
 
-        return CustomerAddressResponse(
-            id=addr.id,
-            title=addr.title,
-            name=addr.name,
-            street=addr.street,
-            city=addr.city,
-            state=addr.state,
-            zip=addr.zip,
-            phone=addr.phone,
-            isDefault=addr.is_default,
-        )
+        return self._format_address_response(addr)
 
     async def update_address(
         self,
@@ -242,17 +240,7 @@ class CustomerService:
         if not addr:
             return None
 
-        return CustomerAddressResponse(
-            id=addr.id,
-            title=addr.title,
-            name=addr.name,
-            street=addr.street,
-            city=addr.city,
-            state=addr.state,
-            zip=addr.zip,
-            phone=addr.phone,
-            isDefault=addr.is_default,
-        )
+        return self._format_address_response(addr)
 
     async def delete_address(self, user_id: str, address_id: str) -> bool:
         return await self.address_repo.delete(address_id, user_id)
@@ -262,22 +250,12 @@ class CustomerService:
         user_id: str,
         address_id: str,
     ) -> CustomerAddressResponse | None:
-
         addr = await self.address_repo.set_default(address_id, user_id)
         if not addr:
             return None
 
-        return CustomerAddressResponse(
-            id=addr.id,
-            title=addr.title,
-            name=addr.name,
-            street=addr.street,
-            city=addr.city,
-            state=addr.state,
-            zip=addr.zip,
-            phone=addr.phone,
-            isDefault=addr.is_default,
-        )
+        return self._format_address_response(addr)
+
 
     # ==========================================================
     # Coupons
@@ -418,16 +396,32 @@ class CustomerService:
                 raise ValueError(f"Cash on Delivery is not available for order subtotal exceeding ₹{ps.maximum_cod_order_value:.2f}.")
 
             total_discount = coupon_discount + coin_discount
-            if ps.free_shipping_min_order > 0 and subtotal >= ps.free_shipping_min_order:
-                shipping = 0.0
-            else:
-                shipping = ps.standard_shipping_charge
+            
+            # Authoritative serviceability and shipping calculation
+            from app.services.fulfillment_routing_service import FulfillmentRoutingService
+            shipping_addr_dict = payload.shipping_address.model_dump()
+            dest_pincode = shipping_addr_dict.get("zip") or shipping_addr_dict.get("pincode") or ""
+            shipping_addr_dict["pincode"] = dest_pincode
+            shipping_addr_dict["zip"] = dest_pincode
+
+            routing_service = FulfillmentRoutingService(self.db)
+            shipping_res = await routing_service.calculate_shipping(
+                pincode=dest_pincode,
+                cart_total=subtotal,
+                city=shipping_addr_dict.get("city"),
+                state=shipping_addr_dict.get("state"),
+                latitude=shipping_addr_dict.get("latitude"),
+                longitude=shipping_addr_dict.get("longitude"),
+            )
+
+            if not shipping_res.serviceable:
+                raise ValueError(shipping_res.message or "Sorry, delivery is currently unavailable for this location.")
+
+            shipping = float(shipping_res.delivery_charge)
 
             tax = round(subtotal * (ps.gst_rate / 100.0), 2)
             total = max(0.0, subtotal - total_discount + shipping + tax)
             total = round(total, 2)
-
-            shipping_addr_dict = payload.shipping_address.model_dump()
 
             # Determine payment_status based on payment method
             # Direct order creation (e.g. COD): payment not yet collected -> PENDING
@@ -449,12 +443,18 @@ class CustomerService:
                 shipping=round(shipping, 2),
                 tax=round(tax, 2),
                 shipping_address=shipping_addr_dict,
-                delivery_option=payload.delivery_option,
+                delivery_option=payload.delivery_option or f"{shipping_res.fulfillment_type.capitalize()} Delivery",
                 payment_method=payload.payment_method,
                 payment_status=initial_payment_status,
                 items_data=items_data,
+                fulfillment_type=shipping_res.fulfillment_type,
+                shipping_provider=shipping_res.shipping_provider,
+                fulfillment_status="UNASSIGNED",
+                store_location_id=shipping_res.origin_store_id,
+                shipping_snapshot=shipping_addr_dict,
                 commit=False,
             )
+
 
             # Deduct redeemed coins from wallet
             if coins_used > 0:
@@ -783,27 +783,37 @@ class CustomerService:
                 )
             cart_items.append(OrderItemResponse(product=product_res, quantity=item.quantity or 1, price=float(item.price or 0.0)))
 
-        ship_addr_raw = getattr(order, "shipping_address", None)
-        if isinstance(ship_addr_raw, dict):
-            ship_addr = ShippingAddressSchema(
-                name=str(ship_addr_raw.get("name") or ""),
-                street=str(ship_addr_raw.get("street") or ""),
-                city=str(ship_addr_raw.get("city") or ""),
-                state=str(ship_addr_raw.get("state") or ""),
-                zip=str(ship_addr_raw.get("zip") or ship_addr_raw.get("zip_code") or ""),
-                phone=str(ship_addr_raw.get("phone") or ""),
-            )
-        elif hasattr(ship_addr_raw, "name"):
-            ship_addr = ShippingAddressSchema(
-                name=str(getattr(ship_addr_raw, "name", "") or ""),
-                street=str(getattr(ship_addr_raw, "street", "") or ""),
-                city=str(getattr(ship_addr_raw, "city", "") or ""),
-                state=str(getattr(ship_addr_raw, "state", "") or ""),
-                zip=str(getattr(ship_addr_raw, "zip", "") or ""),
-                phone=str(getattr(ship_addr_raw, "phone", "") or ""),
-            )
-        else:
-            ship_addr = ShippingAddressSchema(name="", street="", city="", state="", zip="", phone="")
+        ship_addr_raw = getattr(order, "shipping_address", None) or {}
+        if not isinstance(ship_addr_raw, dict):
+            ship_addr_raw = {}
+
+        name_val = getattr(order, "shipping_name", None) or ship_addr_raw.get("name") or ship_addr_raw.get("full_name") or ""
+        street_val = getattr(order, "shipping_street", None) or ship_addr_raw.get("street") or ""
+        city_val = getattr(order, "shipping_city", None) or ship_addr_raw.get("city") or ""
+        state_val = getattr(order, "shipping_state", None) or ship_addr_raw.get("state") or ""
+        zip_val = getattr(order, "shipping_pincode", None) or ship_addr_raw.get("zip") or ship_addr_raw.get("pincode") or ship_addr_raw.get("zip_code") or ""
+        phone_val = getattr(order, "shipping_phone", None) or ship_addr_raw.get("phone") or ""
+
+        ship_addr = ShippingAddressSchema(
+            name=str(name_val),
+            street=str(street_val),
+            city=str(city_val),
+            state=str(state_val),
+            zip=str(zip_val),
+            phone=str(phone_val),
+            house_number=getattr(order, "shipping_house_number", None) or ship_addr_raw.get("house_number"),
+            area=getattr(order, "shipping_area", None) or ship_addr_raw.get("area"),
+            landmark=getattr(order, "shipping_landmark", None) or ship_addr_raw.get("landmark"),
+            district=getattr(order, "shipping_district", None) or ship_addr_raw.get("district"),
+            latitude=getattr(order, "shipping_latitude", None) if getattr(order, "shipping_latitude", None) is not None else ship_addr_raw.get("latitude"),
+            longitude=getattr(order, "shipping_longitude", None) if getattr(order, "shipping_longitude", None) is not None else ship_addr_raw.get("longitude"),
+            formatted_address=getattr(order, "shipping_formatted_address", None) or ship_addr_raw.get("formatted_address"),
+            google_place_id=getattr(order, "shipping_google_place_id", None) or ship_addr_raw.get("google_place_id"),
+            location_source=getattr(order, "shipping_location_source", None) or ship_addr_raw.get("location_source") or "MANUAL",
+            location_verified=bool(getattr(order, "shipping_location_verified", False) or ship_addr_raw.get("location_verified", False)),
+            delivery_charge=getattr(order, "shipping_delivery_charge", None) if getattr(order, "shipping_delivery_charge", None) is not None else getattr(order, "shipping", 0.0),
+            delivery_type=getattr(order, "fulfillment_type", "LOCAL") or "LOCAL",
+        )
 
         created_date = order.created_at.strftime("%Y-%m-%d") if getattr(order, "created_at", None) else datetime.now().strftime("%Y-%m-%d")
 
@@ -865,6 +875,12 @@ class CustomerService:
         customer_whatsapp_url = f"https://wa.me/{cust_phone_clean}?text={encoded_receipt}" if cust_phone_clean else None
         owner_whatsapp_url = f"https://wa.me/{owner_phone_clean}?text={encoded_receipt}" if owner_phone_clean else None
 
+        store_obj = getattr(order, "store_location", None)
+        store_name_val = getattr(store_obj, "name", None) if store_obj else None
+
+        delivery_boy_obj = getattr(order, "delivery_boy", None)
+        delivery_boy_name = getattr(delivery_boy_obj, "full_name", None) if delivery_boy_obj else None
+
         return OrderResponse(
             id=str(order.id),
             items=cart_items,
@@ -884,6 +900,13 @@ class CustomerService:
             shippingAddress=ship_addr,
             deliveryOption=str(order.delivery_option or "Standard Delivery"),
             paymentMethod=str(order.payment_method or "UPI"),
+            fulfillment_type=getattr(order, "fulfillment_type", "LOCAL") or "LOCAL",
+            shipping_provider=getattr(order, "shipping_provider", "INTERNAL") or "INTERNAL",
+            fulfillment_status=getattr(order, "fulfillment_status", "UNASSIGNED") or "UNASSIGNED",
+            delivery_boy_id=getattr(order, "delivery_boy_id", None),
+            delivery_boy_name=delivery_boy_name,
+            store_location_id=getattr(order, "store_location_id", None),
+            store_name=store_name_val,
             invoice_url=getattr(order, "invoice_url", None),
             user_id=getattr(order, "user_id", None),
             is_cancellable=is_cancellable,
@@ -892,7 +915,30 @@ class CustomerService:
             delivered_at=getattr(order, "delivered_at", None),
             customer_whatsapp_url=customer_whatsapp_url,
             owner_whatsapp_url=owner_whatsapp_url,
+            # Delivery OTP workflow
+            delivery_otp=getattr(order, "delivery_otp", None),
+            delivery_otp_expires_at=getattr(order, "delivery_otp_expires_at", None),
+            delivery_accepted_at=getattr(order, "delivery_accepted_at", None),
+            delivery_rejected_at=getattr(order, "delivery_rejected_at", None),
+            delivery_rejection_reason=getattr(order, "delivery_rejection_reason", None),
+            delivery_picked_at=getattr(order, "delivery_picked_at", None),
+            # Shipping snapshot
+            shipping_name=getattr(order, "shipping_name", None) or ship_addr.name,
+            shipping_phone=getattr(order, "shipping_phone", None) or ship_addr.phone,
+            shipping_house_number=getattr(order, "shipping_house_number", None) or ship_addr.house_number,
+            shipping_street=getattr(order, "shipping_street", None) or ship_addr.street,
+            shipping_area=getattr(order, "shipping_area", None) or ship_addr.area,
+            shipping_landmark=getattr(order, "shipping_landmark", None) or ship_addr.landmark,
+            shipping_city=getattr(order, "shipping_city", None) or ship_addr.city,
+            shipping_district=getattr(order, "shipping_district", None) or ship_addr.district,
+            shipping_state=getattr(order, "shipping_state", None) or ship_addr.state,
+            shipping_pincode=getattr(order, "shipping_pincode", None) or ship_addr.zip,
+            shipping_latitude=getattr(order, "shipping_latitude", None) or ship_addr.latitude,
+            shipping_longitude=getattr(order, "shipping_longitude", None) or ship_addr.longitude,
+            shipping_formatted_address=getattr(order, "shipping_formatted_address", None) or ship_addr.formatted_address,
+            shipping_location_verified=getattr(order, "shipping_location_verified", None) or ship_addr.location_verified,
         )
+
 
     # ==========================================================
     # Support Tickets
@@ -1311,6 +1357,11 @@ class CustomerService:
                 text=r.text,
                 date=r.created_at.strftime("%Y-%m-%d") if r.created_at else datetime.now().strftime("%Y-%m-%d"),
                 avatar=r.avatar,
+                title=getattr(r, "title", None),
+                images=getattr(r, "images", []) or [],
+                videos=getattr(r, "videos", []) or [],
+                is_verified_purchase=getattr(r, "is_verified_purchase", False),
+                status=getattr(r, "status", "approved"),
             )
             for r in reviews
         ]
@@ -1332,47 +1383,49 @@ class CustomerService:
         rating: float,
         text: str,
         user_id: str | None = None,
+        title: str | None = None,
+        images: list[str] | None = None,
+        videos: list[str] | None = None,
         bypass_purchase_check: bool = False,
     ) -> dict:
 
-        # 1. Purchase Verification
-        if user_id and not bypass_purchase_check:
-            purchased = await self.verify_user_purchased_product(user_id, product_id)
-            if not purchased:
-                from fastapi import HTTPException, status
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only review products you have purchased."
-                )
+        # 1. Purchase Verification for "Verified Purchase" badge
+        is_verified_purchase = False
+        if user_id:
+            is_verified_purchase = await self.verify_user_purchased_product(user_id, product_id)
 
         initials = "".join([w[0].upper() for w in author.split()[:2]]) if author else "U"
 
-        # 2. Create Review
+        # 2. Create Review with media support in "pending" status (requires admin moderation/approval)
         review = await self.review_repo.create(
             product_id=product_id,
             user_id=user_id,
             author=author,
             rating=rating,
             text=text,
+            title=title,
+            images=images or [],
+            videos=videos or [],
+            is_verified_purchase=is_verified_purchase,
             avatar=initials,
-            status="approved",
+            status="pending",
         )
 
-        # 3. Recalculate Average Rating & Total Ratings Count for Product
+        # 3. Rating summary remains strictly based on approved reviews
         summary = await self.review_repo.get_rating_summary(product_id)
-        await self.product_repo.update(
-            product_id,
-            rating=summary["average_rating"],
-            ratings_count=summary["total_reviews"],
-        )
 
         return {
             "id": review.id,
             "author": review.author,
+            "title": review.title,
             "rating": review.rating,
             "text": review.text,
+            "images": review.images or [],
+            "videos": review.videos or [],
+            "is_verified_purchase": review.is_verified_purchase,
             "date": review.created_at.strftime("%Y-%m-%d") if review.created_at else datetime.now().strftime("%Y-%m-%d"),
             "avatar": review.avatar,
+            "status": review.status,
             "summary": summary,
         }
 

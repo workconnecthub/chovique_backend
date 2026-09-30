@@ -57,6 +57,7 @@ from app.schemas.admin import (
     OrderSummaryStats,
     CustomerDetailsResponse,
     CustomerUpdatePayload,
+    CreateCustomerRequest,
     CustomerListItem,
     CustomerListPaginatedResponse,
     CustomerCoinsResponse,
@@ -643,6 +644,7 @@ class AdminService:
         *,
         status: Optional[str] = None,
         payment_status: Optional[str] = None,
+        fulfillment_type: Optional[str] = None,
         search: Optional[str] = None,
         date_from=None,
         date_to=None,
@@ -655,6 +657,7 @@ class AdminService:
         orders, total = await self.order_repo.admin_list_orders(
             status=status,
             payment_status=payment_status,
+            fulfillment_type=fulfillment_type,
             search=search,
             date_from=date_from,
             date_to=date_to,
@@ -1187,12 +1190,23 @@ class AdminService:
         formatted_addrs = [
             {
                 "id": str(a.id),
+                "title": getattr(a, "title", "Home") or "Home",
                 "name": getattr(a, "name", "") or user.full_name,
                 "phone": getattr(a, "phone", "") or user.phone or "",
+                "house_number": getattr(a, "house_number", "") or "",
                 "street": getattr(a, "street", "") or "",
+                "area": getattr(a, "area", "") or "",
+                "landmark": getattr(a, "landmark", "") or "",
                 "city": getattr(a, "city", "") or "",
+                "district": getattr(a, "district", "") or "",
                 "state": getattr(a, "state", "") or "",
                 "zip": getattr(a, "zip", "") or getattr(a, "zip_code", "") or "",
+                "latitude": getattr(a, "latitude", None),
+                "longitude": getattr(a, "longitude", None),
+                "formatted_address": getattr(a, "formatted_address", "") or "",
+                "google_place_id": getattr(a, "google_place_id", "") or "",
+                "location_source": getattr(a, "location_source", "MANUAL") or "MANUAL",
+                "location_verified": bool(getattr(a, "location_verified", False)),
                 "is_default": bool(getattr(a, "is_default", False)),
             }
             for a in user_addrs
@@ -1202,12 +1216,23 @@ class AdminService:
         if default_addr:
             default_addr_dict = {
                 "id": str(default_addr.id),
+                "title": getattr(default_addr, "title", "Home") or "Home",
                 "name": getattr(default_addr, "name", "") or user.full_name,
                 "phone": getattr(default_addr, "phone", "") or user.phone or "",
+                "house_number": getattr(default_addr, "house_number", "") or "",
                 "street": getattr(default_addr, "street", "") or "",
+                "area": getattr(default_addr, "area", "") or "",
+                "landmark": getattr(default_addr, "landmark", "") or "",
                 "city": getattr(default_addr, "city", "") or "",
+                "district": getattr(default_addr, "district", "") or "",
                 "state": getattr(default_addr, "state", "") or "",
                 "zip": getattr(default_addr, "zip", "") or getattr(default_addr, "zip_code", "") or "",
+                "latitude": getattr(default_addr, "latitude", None),
+                "longitude": getattr(default_addr, "longitude", None),
+                "formatted_address": getattr(default_addr, "formatted_address", "") or "",
+                "google_place_id": getattr(default_addr, "google_place_id", "") or "",
+                "location_source": getattr(default_addr, "location_source", "MANUAL") or "MANUAL",
+                "location_verified": bool(getattr(default_addr, "location_verified", False)),
                 "is_default": bool(getattr(default_addr, "is_default", False)),
             }
         elif orders:
@@ -1215,15 +1240,26 @@ class AdminService:
                 ship_raw = getattr(o, "shipping_address", None)
                 if isinstance(ship_raw, dict) and any(ship_raw.values()):
                     default_addr_dict = {
-                        "name": ship_raw.get("name") or user.full_name,
-                        "phone": ship_raw.get("phone") or user.phone or "",
-                        "street": ship_raw.get("street") or ship_raw.get("address") or "",
-                        "city": ship_raw.get("city") or "",
-                        "state": ship_raw.get("state") or "",
-                        "zip": ship_raw.get("zip") or ship_raw.get("zip_code") or ship_raw.get("pincode") or "",
+                        "name": getattr(o, "shipping_name", None) or ship_raw.get("name") or user.full_name,
+                        "phone": getattr(o, "shipping_phone", None) or ship_raw.get("phone") or user.phone or "",
+                        "house_number": getattr(o, "shipping_house_number", None) or ship_raw.get("house_number") or "",
+                        "street": getattr(o, "shipping_street", None) or ship_raw.get("street") or ship_raw.get("address") or "",
+                        "area": getattr(o, "shipping_area", None) or ship_raw.get("area") or "",
+                        "landmark": getattr(o, "shipping_landmark", None) or ship_raw.get("landmark") or "",
+                        "city": getattr(o, "shipping_city", None) or ship_raw.get("city") or "",
+                        "district": getattr(o, "shipping_district", None) or ship_raw.get("district") or "",
+                        "state": getattr(o, "shipping_state", None) or ship_raw.get("state") or "",
+                        "zip": getattr(o, "shipping_pincode", None) or ship_raw.get("zip") or ship_raw.get("zip_code") or ship_raw.get("pincode") or "",
+                        "latitude": getattr(o, "shipping_latitude", None) if getattr(o, "shipping_latitude", None) is not None else ship_raw.get("latitude"),
+                        "longitude": getattr(o, "shipping_longitude", None) if getattr(o, "shipping_longitude", None) is not None else ship_raw.get("longitude"),
+                        "formatted_address": getattr(o, "shipping_formatted_address", None) or ship_raw.get("formatted_address") or "",
+                        "google_place_id": getattr(o, "shipping_google_place_id", None) or ship_raw.get("google_place_id") or "",
+                        "location_source": getattr(o, "shipping_location_source", None) or ship_raw.get("location_source") or "MANUAL",
+                        "location_verified": bool(getattr(o, "shipping_location_verified", False) or ship_raw.get("location_verified", False)),
                         "is_default": True,
                     }
                     break
+
 
         return CustomerDetailsResponse(
             user=UserResponse.from_orm_user(user),
@@ -1269,6 +1305,62 @@ class AdminService:
             details=f"Updated customer profile fields: {', '.join(changes) if changes else 'none'}",
         )
         return await self.get_customer_details(user_id)
+
+    async def create_customer(self, payload: CreateCustomerRequest, admin_id: str) -> CustomerDetailsResponse:
+        existing = await self.user_repo.get_by_email(payload.email.strip().lower())
+        if existing:
+            raise ValueError("A user with this email address already exists.")
+
+        pwd = payload.password if payload.password and payload.password.strip() else "Customer@123"
+        hashed_pw = hash_password(pwd)
+
+        new_customer = await self.user_repo.create(
+            email=payload.email.strip().lower(),
+            hashed_password=hashed_pw,
+            full_name=payload.full_name.strip(),
+            phone=payload.phone.strip() if payload.phone else None,
+            gender=payload.gender.strip() if payload.gender else None,
+            role="customer",
+            is_email_verified=True,
+            is_active=payload.is_active,
+        )
+
+        # Create wallet
+        from app.repositories.wallet_repository import WalletRepository
+        wallet_repo = WalletRepository(self.db)
+        await wallet_repo.get_or_create_wallet(new_customer.id)
+
+        # Create address if address details provided
+        if payload.street and payload.city:
+            from app.models.address import CustomerAddress
+            new_address = CustomerAddress(
+                user_id=new_customer.id,
+                title="Home",
+                name=payload.full_name.strip(),
+                house_number=payload.house_number.strip() if payload.house_number else None,
+                street=payload.street.strip(),
+                area=payload.area.strip() if payload.area else None,
+                landmark=payload.landmark.strip() if payload.landmark else None,
+                city=payload.city.strip(),
+                district=payload.district.strip() if payload.district else None,
+                state=payload.state.strip() if payload.state else "Telangana",
+                zip=payload.zip.strip() if payload.zip else "500001",
+                phone=payload.phone.strip() if payload.phone else "0000000000",
+                location_source="MANUAL",
+                location_verified=False,
+                is_default=True,
+            )
+            self.db.add(new_address)
+            await self.db.commit()
+
+        await self.audit_repo.log(
+            action="create_customer",
+            user_id=admin_id,
+            resource=f"user:{new_customer.id}",
+            details=f"Created customer account: {payload.email} ({payload.full_name})",
+        )
+
+        return await self.get_customer_details(new_customer.id)
 
     async def delete_customer(self, user_id: str, admin_id: str):
         user = await self.user_repo.get_by_id(user_id)
@@ -1954,27 +2046,47 @@ class AdminService:
         video_file: Optional[UploadFile] = None,
     ) -> ReelResponse:
         video_url = payload.video_url
+        instagram_url = payload.instagram_url or payload.video_url
+        account_name = payload.account_name or "@chovique_chocolatier"
+
         if video_file and hasattr(video_file, "filename") and video_file.filename:
             video_url = await storage_service.upload_video(
                 file=video_file,
                 folder="chocolate-world/reels",
             )
+        elif instagram_url and "instagram.com" in instagram_url:
+            # Auto-fetch direct video MP4 and account handle from Instagram
+            try:
+                from app.services.instagram_service import fetch_instagram_reel_details
+                meta = fetch_instagram_reel_details(instagram_url, upload_to_cloudinary=True)
+                if meta.get("video_url"):
+                    video_url = meta["video_url"]
+                if meta.get("account_name") and (not payload.account_name or payload.account_name in {"@chovique_chocolatier", ""}):
+                    account_name = meta["account_name"]
+                if meta.get("instagram_url"):
+                    instagram_url = meta["instagram_url"]
+            except Exception as e:
+                logger.warning("Could not auto-fetch Instagram reel details: %s", e)
 
-        if not video_url:
-            video_url = "https://assets.mixkit.co/videos/preview/mixkit-chocolate-sauce-being-poured-on-dessert-42790-large.mp4"
+        if not video_url and not instagram_url:
+            video_url = "https://res.cloudinary.com/aiqm7f7b/video/upload/v1790396266/chocolate-world/reels/ig_DdQYj55v0dr.mp4"
 
         reel = await self.reel_repo.create(
-            video_url=video_url,
-            likes=payload.likes,
-            comments=payload.comments,
-            views=payload.views,
-            title=payload.title,
+            video_url=video_url or instagram_url or "",
+            instagram_url=instagram_url or video_url,
+            account_name=account_name,
+            likes=payload.likes or "0",
+            comments=payload.comments or "0",
+            views=payload.views or "0 views",
+            title=payload.title or account_name or "Instagram Reel",
             sort_order=payload.sort_order,
             is_active=payload.is_active,
         )
         return ReelResponse(
             id=reel.id,
             videoUrl=reel.video_url,
+            instagramUrl=reel.instagram_url,
+            accountName=reel.account_name,
             likes=reel.likes,
             comments=reel.comments,
             views=reel.views,
@@ -1996,6 +2108,8 @@ class AdminService:
         comments: Optional[str] = None,
         views: Optional[str] = None,
         video_url: Optional[str] = None,
+        instagram_url: Optional[str] = None,
+        account_name: Optional[str] = None,
         video_file=None,
     ) -> ReelResponse:
         # If a new video file is uploaded, push to S3 storage
@@ -2005,6 +2119,16 @@ class AdminService:
                 file=video_file,
                 folder="chocolate-world/reels",
             )
+        elif instagram_url and "instagram.com" in instagram_url and (not video_url or not video_url.endswith(".mp4")):
+            try:
+                from app.services.instagram_service import fetch_instagram_reel_details
+                meta = fetch_instagram_reel_details(instagram_url, upload_to_cloudinary=True)
+                if meta.get("video_url"):
+                    video_url = meta["video_url"]
+                if meta.get("account_name") and not account_name:
+                    account_name = meta["account_name"]
+            except Exception as e:
+                logger.warning("Could not auto-fetch Instagram reel details in update_reel: %s", e)
 
         updated = await self.reel_repo.update(
             reel_id,
@@ -2014,6 +2138,8 @@ class AdminService:
                 "comments": comments,
                 "views": views,
                 "video_url": video_url,
+                "instagram_url": instagram_url,
+                "account_name": account_name,
             }.items() if v is not None},
         )
         if not updated:
@@ -2021,6 +2147,8 @@ class AdminService:
         return ReelResponse(
             id=updated.id,
             videoUrl=updated.video_url,
+            instagramUrl=updated.instagram_url,
+            accountName=updated.account_name or "@chovique_chocolatier",
             likes=updated.likes,
             comments=updated.comments,
             views=updated.views,
@@ -2109,7 +2237,40 @@ class AdminService:
     async def get_all_reviews(self) -> list:
         from app.repositories.review_repository import ReviewRepository
         review_repo = ReviewRepository(self.db)
-        return await review_repo.get_all()
+        reviews = await review_repo.get_all()
+        return [
+            {
+                "id": r.id,
+                "product_id": r.product_id,
+                "product_name": r.product.name if r.product else "Chovique Chocolate",
+                "product_image": r.product.image if r.product else None,
+                "author": r.author,
+                "title": getattr(r, "title", None),
+                "rating": r.rating,
+                "text": r.text,
+                "images": getattr(r, "images", []) or [],
+                "videos": getattr(r, "videos", []) or [],
+                "is_verified_purchase": getattr(r, "is_verified_purchase", False),
+                "is_featured_on_home": getattr(r, "is_featured_on_home", False),
+                "status": getattr(r, "status", "approved"),
+                "created_at": r.created_at.strftime("%Y-%m-%d") if r.created_at else "",
+                "avatar": r.avatar,
+            }
+            for r in reviews
+        ]
+
+    async def update_review_status(self, review_id: str, status_val: str, is_featured_on_home: bool | None = None):
+        from app.repositories.review_repository import ReviewRepository
+        review_repo = ReviewRepository(self.db)
+        review = await review_repo.update_status(review_id, status_val, is_featured_on_home=is_featured_on_home)
+        if review:
+            summary = await review_repo.get_rating_summary(review.product_id)
+            await self.product_repo.update(
+                review.product_id,
+                rating=summary["average_rating"],
+                ratings_count=summary["total_reviews"],
+            )
+        return review
 
     async def delete_review(self, review_id: str) -> bool:
         from app.repositories.review_repository import ReviewRepository
@@ -2141,7 +2302,7 @@ class AdminService:
             folder="chocolate-world/story",
         )
         if not video_url:
-            video_url = "https://assets.mixkit.co/videos/preview/mixkit-pouring-melted-chocolate-on-a-muffin-34289-large.mp4"
+            video_url = "https://res.cloudinary.com/aiqm7f7b/video/upload/v1790396266/chocolate-world/reels/ig_DdQYj55v0dr.mp4"
         await self.site_config_repo.set("story_video", {"video_url": video_url})
         return video_url
 
@@ -2149,10 +2310,10 @@ class AdminService:
         data = await self.site_config_repo.get("story_video")
         if data and isinstance(data, dict) and "video_url" in data:
             return data["video_url"]
-        return "https://assets.mixkit.co/videos/preview/mixkit-pouring-melted-chocolate-on-a-muffin-34289-large.mp4"
+        return "https://res.cloudinary.com/aiqm7f7b/video/upload/v1790396266/chocolate-world/reels/ig_DdQYj55v0dr.mp4"
 
     async def delete_story_video(self) -> str:
-        default_video = "https://assets.mixkit.co/videos/preview/mixkit-pouring-melted-chocolate-on-a-muffin-34289-large.mp4"
+        default_video = "https://res.cloudinary.com/aiqm7f7b/video/upload/v1790396266/chocolate-world/reels/ig_DdQYj55v0dr.mp4"
         await self.site_config_repo.set("story_video", {"video_url": default_video})
         return default_video
 

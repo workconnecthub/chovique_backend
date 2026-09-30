@@ -23,7 +23,7 @@ class User(Base):
     google_id = Column(String(120), unique=True, nullable=True)
 
     role = Column(
-        Enum("customer", "admin", "superadmin", name="user_role"),
+        Enum("customer", "admin", "superadmin", "delivery_boy", name="user_role"),
         nullable=False,
         default="customer",
     )

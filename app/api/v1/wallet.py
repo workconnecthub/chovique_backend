@@ -35,9 +35,48 @@ async def get_transactions(
     service = WalletService(db)
     calc_offset = offset if offset is not None else (page - 1) * limit
     txs = await service.wallet_repo.get_transactions(current_user.id, type_filter=type, limit=limit, offset=calc_offset)
-    total = await service.wallet_repo.count_transactions(current_user.id, type_filter=type)
-    pages = (total + limit - 1) // limit if limit > 0 else 1
-    items = [CoinTransactionResponse.model_validate(t) for t in txs]
+    from datetime import datetime, timezone, timedelta
+    now_utc = datetime.now(timezone.utc)
+    settings = await service.get_reward_settings()
+    delay_hours = getattr(settings, "credit_delay_hours", 24) or 24
+
+    items = []
+    for t in txs:
+        t_type = (t.type or "").upper()
+        t_dt = t.created_at
+        if t_dt and t_dt.tzinfo is None:
+            t_dt = t_dt.replace(tzinfo=timezone.utc)
+
+        is_welcome = t_type in ("WELCOME", "WELCOME_BONUS", "ACCOUNT_CREATION") or "welcome" in (t.description or "").lower()
+        is_order_earn = (t_type in ("EARN", "ORDER_REWARD", "FIRST_ORDER_BONUS") or bool(t.order_id)) and not is_welcome
+
+        status = "AVAILABLE"
+        is_pending = False
+        unlocks_at = None
+
+        if is_order_earn and t_dt:
+            target_unlock = t_dt + timedelta(hours=delay_hours)
+            if now_utc < target_unlock:
+                status = "PENDING"
+                is_pending = True
+                unlocks_at = target_unlock
+
+        items.append(
+            CoinTransactionResponse(
+                id=t.id,
+                user_id=t.user_id,
+                order_id=t.order_id,
+                type="WELCOME" if is_welcome else t.type,
+                coins=t.coins,
+                description=t.description,
+                created_at=t.created_at,
+                status=status,
+                is_pending=is_pending,
+                unlocks_at=unlocks_at,
+                delay_hours=delay_hours,
+            )
+        )
+
     return {
         "items": items,
         "total": total,

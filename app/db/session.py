@@ -38,6 +38,8 @@ from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.offline_sale import OfflineSale  # noqa: F401
 from app.models.theme import ThemePreset  # noqa: F401
 from app.models.wallet import UserWallet, CoinTransaction  # noqa: F401
+from app.models.store_location import StoreLocation  # noqa: F401
+from app.models.delivery_service_area import DeliveryServiceArea  # noqa: F401
 # ==========================================================
 # Create Async Engine
 # ==========================================================
@@ -100,6 +102,11 @@ async def init_db() -> None:
             # Product Reviews
             "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'approved';",
             "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;",
+            "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS title VARCHAR(200);",
+            "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS images JSON;",
+            "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS videos JSON;",
+            "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS is_verified_purchase BOOLEAN NOT NULL DEFAULT FALSE;",
+            "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS is_featured_on_home BOOLEAN NOT NULL DEFAULT FALSE;",
             # Categories
             "ALTER TABLE categories ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;",
             "ALTER TABLE categories ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;",
@@ -151,9 +158,16 @@ async def init_db() -> None:
             "UPDATE products SET rating = 4.7 WHERE (name ILIKE '%Hazelnut%' OR name ILIKE '%Crunch%') AND (rating IS NULL OR rating = 0.0);",
             "UPDATE products SET rating = 4.8 WHERE (name ILIKE '%Salted Caramel%' OR name ILIKE '%Bonbons%') AND (rating IS NULL OR rating = 0.0);",
             "UPDATE products SET rating = 4.6 WHERE (name ILIKE '%White Macadamia%' OR name ILIKE '%Macadamia%') AND (rating IS NULL OR rating = 0.0);",
-            "UPDATE products SET rating = 4.8 WHERE rating IS NULL OR rating = 0.0;",
             # Cleanup removed Inventory module table
             "DROP TABLE IF EXISTS inventory_logs CASCADE;",
+            # Instagram Reels enhancements
+            "ALTER TABLE instagram_reels ADD COLUMN IF NOT EXISTS instagram_url VARCHAR(500);",
+            "ALTER TABLE instagram_reels ADD COLUMN IF NOT EXISTS account_name VARCHAR(100) DEFAULT '@chovique_chocolatier';",
+            "ALTER TABLE instagram_reels ALTER COLUMN video_url DROP NOT NULL;",
+            "ALTER TABLE instagram_reels ALTER COLUMN title DROP NOT NULL;",
+            "ALTER TABLE instagram_reels ALTER COLUMN likes DROP NOT NULL;",
+            "ALTER TABLE instagram_reels ALTER COLUMN comments DROP NOT NULL;",
+            "ALTER TABLE instagram_reels ALTER COLUMN views DROP NOT NULL;",
         ]
         for stmt in alter_statements:
             try:

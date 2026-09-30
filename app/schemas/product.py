@@ -34,6 +34,11 @@ class ReviewResponse(BaseModel):
     text: str
     date: str
     avatar: Optional[str] = None
+    title: Optional[str] = None
+    images: list[str] = []
+    videos: list[str] = []
+    is_verified_purchase: bool = False
+    status: str = "approved"
 
 
 # ==========================================================
@@ -80,8 +85,14 @@ class ProductResponse(BaseModel):
                     text=r.text,
                     date=r.created_at.strftime("%Y-%m-%d") if r.created_at else "",
                     avatar=r.avatar,
+                    title=getattr(r, "title", None),
+                    images=getattr(r, "images", []) or [],
+                    videos=getattr(r, "videos", []) or [],
+                    is_verified_purchase=getattr(r, "is_verified_purchase", False),
+                    status=getattr(r, "status", "approved"),
                 )
                 for r in product.__dict__["reviews_list"]
+                if getattr(r, "status", "approved") == "approved"
             ]
 
         raw_stock = getattr(product, "stock", 0)

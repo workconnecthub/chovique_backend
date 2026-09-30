@@ -138,9 +138,37 @@ class HomeService:
 
     async def get_testimonials(self) -> list[TestimonialResponse]:
         testimonials = await self.testimonial_repo.get_active()
-        return [
+        resp_list = [
             TestimonialResponse.from_orm_model(t) for t in testimonials
         ]
+
+        try:
+            from app.repositories.review_repository import ReviewRepository
+            review_repo = ReviewRepository(self.db)
+            featured_reviews = await review_repo.get_featured_on_home(limit=10)
+            for r in featured_reviews:
+                prod_name = r.product.name if r.product else "Artisanal Chocolate"
+                initials = "".join([w[0].upper() for w in r.author.split()[:2]]) if r.author else "CL"
+                avatar = r.images[0] if (r.images and len(r.images) > 0) else None
+                title_str = f"Verified Buyer • {prod_name}"
+                if not any(t.author == r.author and t.text == r.text for t in resp_list):
+                    resp_list.insert(0, TestimonialResponse(
+                        id=f"feat-{r.id}",
+                        author=r.author,
+                        title=title_str,
+                        text=f'"{r.title}" — {r.text}' if r.title else r.text,
+                        rating=r.rating,
+                        stars=int(round(r.rating)),
+                        initials=initials,
+                        avatar_url=avatar,
+                        status="approved",
+                        is_active=True,
+                        sort_order=0,
+                    ))
+        except Exception:
+            pass
+
+        return resp_list
 
     async def submit_testimonial(
         self,
@@ -227,6 +255,8 @@ class HomeService:
             {
                 "id": r.id,
                 "videoUrl": r.video_url,
+                "instagramUrl": r.instagram_url,
+                "accountName": r.account_name or "@chovique_chocolatier",
                 "likes": r.likes,
                 "comments": r.comments,
                 "views": r.views,

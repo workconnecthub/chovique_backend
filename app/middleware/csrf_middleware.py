@@ -16,6 +16,7 @@ CSRF_EXEMPT_PATHS = {
     "/api/v1/auth/reset-password",
     "/api/v1/auth/refresh",
     "/api/v1/coupons/validate",
+    "/api/v1/shipping/calculate",
     "/api/v1/checkout/initiate",
     "/api/v1/payments/verify",
     "/api/v1/orders",
@@ -33,11 +34,16 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             raw_path = request.url.path
             normalized_path = raw_path.rstrip("/") if raw_path != "/" else "/"
 
-            # Skip CSRF check for exempt endpoints and webhooks
+            # Skip CSRF check for exempt endpoints, webhooks, and admin/superadmin routes (role-protected)
             if (
                 raw_path not in CSRF_EXEMPT_PATHS
                 and normalized_path not in CSRF_EXEMPT_PATHS
                 and not raw_path.startswith("/api/v1/webhooks")
+                and not normalized_path.startswith("/api/v1/webhooks")
+                and not raw_path.startswith("/api/v1/admin")
+                and not normalized_path.startswith("/api/v1/admin")
+                and not raw_path.startswith("/api/v1/superadmin")
+                and not normalized_path.startswith("/api/v1/superadmin")
             ):
                 # If request has an Authorization: Bearer <token> header, it is an explicit
                 # token-authenticated API call. Browsers never automatically attach Bearer headers,

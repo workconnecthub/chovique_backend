@@ -37,6 +37,7 @@ from app.schemas.admin import (
     UpdateOrderStatusPayload,
     CustomerDetailsResponse,
     CustomerUpdatePayload,
+    CreateCustomerRequest,
     CustomerListPaginatedResponse,
     CustomerCoinsResponse,
 )
@@ -1371,6 +1372,7 @@ async def get_all_orders(
     search: Optional[str] = Query(None, description="Search term for order ID or shipping address"),
     status: Optional[str] = Query(None, description="Fulfillment status filter (Processing, Confirmed, Shipped, Out_For_Delivery, Delivered, Cancelled)"),
     payment_status: Optional[str] = Query(None, description="Payment status filter (PENDING, PAID, FAILED, REFUNDED)"),
+    fulfillment_type: Optional[str] = Query(None, description="Fulfillment type filter (LOCAL, COURIER, ALL)"),
     date_from: Optional[date_type] = Query(None, description="Filter orders created on or after date (YYYY-MM-DD)"),
     date_to: Optional[date_type] = Query(None, description="Filter orders created on or before date (YYYY-MM-DD)"),
     sort_by: str = Query("created_at", description="Field to sort by (created_at, total, status, payment_status)"),
@@ -1382,6 +1384,7 @@ async def get_all_orders(
     return await service.admin_list_orders(
         status=status,
         payment_status=payment_status,
+        fulfillment_type=fulfillment_type,
         search=search,
         date_from=date_from,
         date_to=date_to,
@@ -1453,6 +1456,131 @@ async def update_payment_status(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# ======================================================
+# iTHINK LOGISTICS COURIER INTEGRATION
+# ======================================================
+
+class IThinkConfigPayload(BaseModel):
+    api_key: str
+    secret_key: str
+    auto_sync: Optional[bool] = True
+
+
+@router.get(
+    "/shipping/ithink/config",
+    summary="Get iThink Logistics API Configuration (admin/superadmin)",
+)
+async def get_ithink_config(
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.site_config import SiteConfig
+    res_k = await db.execute(select(SiteConfig).where(SiteConfig.key == "ithink_logistics_api_key"))
+    res_s = await db.execute(select(SiteConfig).where(SiteConfig.key == "ithink_logistics_secret_key"))
+    k_row = res_k.scalar_one_or_none()
+    s_row = res_s.scalar_one_or_none()
+
+    api_key = k_row.value if k_row else ""
+    secret_key = s_row.value if s_row else ""
+
+    masked_k = f"{api_key[:4]}••••{api_key[-4:]}" if len(api_key) > 8 else ("••••" if api_key else "")
+    masked_s = f"{secret_key[:3]}••••{secret_key[-3:]}" if len(secret_key) > 6 else ("••••" if secret_key else "")
+
+    return {
+        "configured": bool(api_key),
+        "api_key": masked_k,
+        "raw_key_available": bool(api_key),
+        "provider": "ITHINK_LOGISTICS",
+        "supported_couriers": ["BlueDart", "Delhivery", "XpressBees", "DTDC", "Shadowfax"],
+    }
+
+
+@router.post(
+    "/shipping/ithink/config",
+    summary="Update iThink Logistics API Credentials (admin/superadmin)",
+)
+async def update_ithink_config(
+    payload: IThinkConfigPayload,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.site_config import SiteConfig
+    clean_key = payload.api_key.strip()
+    clean_sec = payload.secret_key.strip()
+
+    if clean_key:
+        res_k = await db.execute(select(SiteConfig).where(SiteConfig.key == "ithink_logistics_api_key"))
+        k_row = res_k.scalar_one_or_none()
+        if k_row:
+            k_row.value = clean_key
+        else:
+            db.add(SiteConfig(key="ithink_logistics_api_key", value=clean_key))
+
+    if clean_sec:
+        res_s = await db.execute(select(SiteConfig).where(SiteConfig.key == "ithink_logistics_secret_key"))
+        s_row = res_s.scalar_one_or_none()
+        if s_row:
+            s_row.value = clean_sec
+        else:
+            db.add(SiteConfig(key="ithink_logistics_secret_key", value=clean_sec))
+
+    await db.commit()
+    masked_key = f"{clean_key[:4]}••••{clean_key[-4:]}" if clean_key and len(clean_key) > 8 else "••••••••"
+    return {
+        "message": "iThink Logistics credentials saved successfully!",
+        "status": "active",
+        "configured": True,
+        "api_key_masked": masked_key,
+    }
+
+
+@router.post(
+    "/orders/{order_id}/push-ithink",
+    summary="Push a courier order directly to iThink Logistics API",
+)
+async def push_order_to_ithink(
+    order_id: str,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.order import Order
+    from app.models.site_config import SiteConfig
+    from app.services.shipping.ithink_logistics_provider import IThinkLogisticsProvider
+
+    res = await db.execute(select(Order).where(Order.id == order_id))
+    order = res.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Order '{order_id}' not found.")
+
+    res_k = await db.execute(select(SiteConfig).where(SiteConfig.key == "ithink_logistics_api_key"))
+    res_s = await db.execute(select(SiteConfig).where(SiteConfig.key == "ithink_logistics_secret_key"))
+    k_row = res_k.scalar_one_or_none()
+    s_row = res_s.scalar_one_or_none()
+
+    provider = IThinkLogisticsProvider(
+        api_key=k_row.value if k_row else None,
+        secret_key=s_row.value if s_row else None,
+    )
+
+    shipment_res = await provider.push_order(order)
+
+    order.fulfillment_type = "COURIER"
+    order.shipping_provider = "ITHINK_LOGISTICS"
+    if order.status in ["Processing", "Confirmed", "Pending"]:
+        order.status = "Shipped"
+
+    await db.commit()
+    await db.refresh(order)
+
+    return {
+        "message": shipment_res.get("message", "Order successfully booked with iThink Logistics!"),
+        "shipment": shipment_res,
+        "order_id": order.id,
+        "status": order.status,
+        "shipping_provider": "ITHINK_LOGISTICS",
+    }
 
 
 @router.get(
@@ -1550,6 +1678,24 @@ async def get_customers(
         page=page,
         limit=limit,
     )
+
+
+@router.post(
+    "/customers",
+    response_model=CustomerDetailsResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new customer directly (admin/superadmin only)",
+)
+async def create_customer(
+    payload: CreateCustomerRequest,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        service = AdminService(db)
+        return await service.create_customer(payload, admin_id=current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.get(
@@ -2024,9 +2170,59 @@ async def admin_delete_review(
     return None
 
 
+class UpdateReviewStatusPayload(BaseModel):
+    status: str
+    is_featured_on_home: Optional[bool] = None
+
+@router.patch(
+    "/reviews/{review_id}/status",
+    summary="Update product review status and optional homepage featuring",
+)
+async def admin_update_review_status(
+    review_id: str,
+    payload: UpdateReviewStatusPayload,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    review = await service.update_review_status(
+        review_id,
+        payload.status,
+        is_featured_on_home=payload.is_featured_on_home,
+    )
+    if not review:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found.")
+    return {
+        "id": review.id,
+        "status": review.status,
+        "is_featured_on_home": bool(getattr(review, "is_featured_on_home", False)),
+    }
+
+
 # ======================================================
 # CMS — INSTAGRAM REELS
 # ======================================================
+
+class FetchReelMetaPayload(BaseModel):
+    url: str
+
+@router.post(
+    "/reels/fetch-meta",
+    summary="Auto-fetch Instagram reel metadata and direct video (admin only)",
+)
+async def fetch_reel_meta(
+    payload: FetchReelMetaPayload,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+):
+    from app.services.instagram_service import fetch_instagram_reel_details
+    try:
+        data = fetch_instagram_reel_details(payload.url, upload_to_cloudinary=True)
+        return data
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e) or "Failed to fetch details from Instagram Reel URL",
+        )
 
 @router.post(
     "/reels",
@@ -2035,23 +2231,27 @@ async def admin_delete_review(
     summary="Create a new Instagram reel entry (admin only)",
 )
 async def create_reel(
-    title: str = Form(...),
+    title: Optional[str] = Form(default="Instagram Reel"),
     likes: str = Form(default="0"),
     comments: str = Form(default="0"),
     views: str = Form(default="0 views"),
     sort_order: int = Form(default=0),
     is_active: bool = Form(default=True),
     video_url: Optional[str] = Form(default=None),
-    video: UploadFile = File(default=None),
+    instagram_url: Optional[str] = Form(default=None),
+    account_name: Optional[str] = Form(default="@chovique_chocolatier"),
+    video: Optional[UploadFile] = File(default=None),
     current_user: User = Depends(require_role("admin", "superadmin")),
     db: AsyncSession = Depends(get_db),
 ):
     payload = CreateReelRequest(
         video_url=video_url,
+        instagram_url=instagram_url,
+        account_name=account_name,
         likes=likes,
         comments=comments,
         views=views,
-        title=title,
+        title=title or account_name or "Instagram Reel",
         sort_order=sort_order,
         is_active=is_active,
     )
@@ -2088,7 +2288,9 @@ async def update_reel(
     comments: Optional[str] = Form(default=None),
     views: Optional[str] = Form(default=None),
     video_url: Optional[str] = Form(default=None),
-    video: UploadFile = File(default=None),
+    instagram_url: Optional[str] = Form(default=None),
+    account_name: Optional[str] = Form(default=None),
+    video: Optional[UploadFile] = File(default=None),
     current_user: User = Depends(require_role("admin", "superadmin")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2101,6 +2303,8 @@ async def update_reel(
             comments=comments,
             views=views,
             video_url=video_url,
+            instagram_url=instagram_url,
+            account_name=account_name,
             video_file=video if (video and video.filename) else None,
         )
     except ValueError as e:

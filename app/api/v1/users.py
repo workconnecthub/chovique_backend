@@ -28,6 +28,21 @@ async def get_me(
         None,
     )
 
+    # Auto-migrate Google DP avatar to Railway Tigris S3 bucket if still referencing googleusercontent.com
+    if current_user.avatar_url and "googleusercontent.com" in current_user.avatar_url:
+        from app.services.storage_service import storage_service
+        try:
+            bucket_avatar_url = await storage_service.upload_from_url(
+                current_user.avatar_url, folder="chocolate-world/avatars"
+            )
+            if bucket_avatar_url and "googleusercontent.com" not in bucket_avatar_url:
+                current_user.avatar_url = bucket_avatar_url
+                db.add(current_user)
+                await db.commit()
+                await db.refresh(current_user)
+        except Exception:
+            pass
+
     user = UserResponse.from_orm_user(current_user)
 
     if default_address:

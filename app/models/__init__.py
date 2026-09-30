@@ -24,3 +24,6 @@ from app.models.ticket import SupportTicket
 from app.models.user import User
 from app.models.wallet import UserWallet, CoinTransaction
 from app.models.wishlist import WishlistItem
+from app.models.store_location import StoreLocation
+from app.models.delivery_service_area import DeliveryServiceArea
+from app.models.delivery_location import DeliveryPersonLocation

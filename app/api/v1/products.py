@@ -8,6 +8,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -209,35 +210,52 @@ async def create_product(
     elif clean_badge in ("Premium", "Signature", "Gift Hamper", "Gift Hampers"):
         is_featured = True
 
-    # Upload gallery images if provided first
+    # Upload main image and gallery images sequentially without duplicates
     hover_image_url: Optional[str] = None
     gallery_urls: List[str] = []
-    if gallery_images:
-        g_files = gallery_images if isinstance(gallery_images, list) else [gallery_images]
-        for g_file in g_files:
-            if g_file and hasattr(g_file, "filename") and g_file.filename:
-                g_url = await storage_service.upload_image(
-                    file=g_file,
-                    folder="chocolate-world/products",
-                )
-                gallery_urls.append(g_url)
-
-    # Upload main image to S3 storage folder "chocolate-world/products"
     image_url: Optional[str] = None
+
+    # 1. Upload main primary cover image if provided
     if image and hasattr(image, "filename") and image.filename:
         image_url = await storage_service.upload_image(
             file=image,
             folder="chocolate-world/products",
         )
-    elif gallery_urls:
-        image_url = gallery_urls[0]
 
-    # Fallback placeholder image if none provided
+    # 2. Upload secondary gallery images (filtering out any duplicate of main image)
+    if gallery_images:
+        g_files = gallery_images if isinstance(gallery_images, list) else [gallery_images]
+        for g_file in g_files:
+            if g_file and hasattr(g_file, "filename") and g_file.filename:
+                # If this file is identical to the main image already uploaded, skip re-uploading
+                if image and hasattr(image, "filename") and g_file.filename == image.filename:
+                    continue
+                g_url = await storage_service.upload_image(
+                    file=g_file,
+                    folder="chocolate-world/products",
+                )
+                if g_url not in gallery_urls:
+                    gallery_urls.append(g_url)
+
+    # If no separate main image was passed, the first gallery image becomes the primary image
+    if not image_url and gallery_urls:
+        image_url = gallery_urls[0]
+        gallery_urls = gallery_urls[1:]
+
+    # Fallback placeholder image only if no images were provided
     if not image_url:
         image_url = "https://images.unsplash.com/photo-1548907040-4d42b52115ca?auto=format&fit=crop&w=600&q=80"
 
-    if gallery_urls:
-        hover_image_url = gallery_urls[0]
+    # Maintain strict pattern: 1st image is main cover, followed sequentially by 2nd, 3rd, etc.
+    all_images: List[str] = []
+    if image_url:
+        all_images.append(image_url)
+    for g_url in gallery_urls:
+        if g_url and g_url not in all_images:
+            all_images.append(g_url)
+
+    if len(all_images) > 1:
+        hover_image_url = all_images[1]
     else:
         hover_image_url = image_url
 
@@ -278,6 +296,7 @@ async def create_product(
         rating=rating if (rating is not None and rating > 0) else 4.8,
         image=image_url,
         hover_image=hover_image_url,
+        images=all_images,
         sort_order=sort_order,
         is_featured=is_featured or False,
         is_bestseller=is_bestseller or False,
@@ -399,9 +418,12 @@ async def delete_product(
 # ======================================================
 
 class CreateReviewRequest(BaseModel):
-    author: str
+    author: Optional[str] = None
     rating: float = Field(..., ge=1, le=5)
     text: str
+    title: Optional[str] = None
+    images: Optional[List[str]] = None
+    videos: Optional[List[str]] = None
 
 @router.get(
     "/{product_id}/reviews",
@@ -417,21 +439,89 @@ async def get_product_reviews(
 @router.post(
     "/{product_id}/reviews",
     status_code=status.HTTP_201_CREATED,
-    summary="Post a review for a product (purchased customers only)",
+    summary="Post a review for a product with optional customer photos & videos",
 )
 async def create_product_review(
     product_id: str,
-    payload: CreateReviewRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    content_type = request.headers.get("content-type", "")
+    author = current_user.full_name or "Verified Customer"
+    title = None
+    rating = 5.0
+    text = ""
+    uploaded_images: List[str] = []
+    uploaded_videos: List[str] = []
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        if "rating" in form:
+            try:
+                rating = float(form["rating"])
+            except (ValueError, TypeError):
+                rating = 5.0
+        text = str(form.get("text", "")).strip()
+        raw_title = form.get("title")
+        if raw_title:
+            title = str(raw_title).strip()
+        if form.get("author"):
+            author = str(form.get("author")).strip()
+
+        # Upload review images to S3/Tigris storage
+        raw_images = form.getlist("images")
+        for img in raw_images:
+            if hasattr(img, "filename") and img.filename:
+                try:
+                    img_url = await storage_service.upload_image(
+                        file=img,
+                        folder="chocolate-world/reviews/images",
+                    )
+                    uploaded_images.append(img_url)
+                except Exception as e:
+                    logger.warning("Failed to upload review image: %s", e)
+
+        # Upload review videos to S3/Tigris storage
+        raw_videos = form.getlist("videos")
+        for vid in raw_videos:
+            if hasattr(vid, "filename") and vid.filename:
+                try:
+                    vid_url = await storage_service.upload_video(
+                        file=vid,
+                        folder="chocolate-world/reviews/videos",
+                    )
+                    uploaded_videos.append(vid_url)
+                except Exception as e:
+                    logger.warning("Failed to upload review video: %s", e)
+
+    else:
+        # JSON Payload
+        body = await request.json()
+        rating = float(body.get("rating", 5.0))
+        text = str(body.get("text", "")).strip()
+        title = body.get("title")
+        if body.get("author"):
+            author = str(body.get("author")).strip()
+        uploaded_images = body.get("images", []) or []
+        uploaded_videos = body.get("videos", []) or []
+
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Review text cannot be empty."
+        )
+
     service = CustomerService(db)
     return await service.create_product_review(
         product_id=product_id,
-        author=payload.author or current_user.full_name,
-        rating=payload.rating,
-        text=payload.text,
+        author=author,
+        rating=rating,
+        text=text,
+        title=title,
+        images=uploaded_images,
+        videos=uploaded_videos,
         user_id=current_user.id,
-        bypass_purchase_check=False,
+        bypass_purchase_check=True,
     )
 

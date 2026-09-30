@@ -208,11 +208,21 @@ class AvatarUploadResponse(BaseModel):
 class CustomerAddressCreate(BaseModel):
     title: str = "Home"
     name: str
+    house_number: Optional[str] = None
     street: str
+    area: Optional[str] = None
+    landmark: Optional[str] = None
     city: str
+    district: Optional[str] = None
     state: str
     zip: str
     phone: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    formatted_address: Optional[str] = None
+    google_place_id: Optional[str] = None
+    location_source: Optional[str] = "MANUAL"
+    location_verified: Optional[bool] = False
     isDefault: bool = False
 
     @field_validator("title", mode="before")
@@ -281,19 +291,34 @@ class CustomerAddressCreate(BaseModel):
     @classmethod
     def validate_phone(cls, v):
         s = str(v or "").strip()
-        if not re.match(r"^[6-9]\d{9}$", s):
+        cleaned = re.sub(r"\D", "", s)
+        if cleaned.startswith("91") and len(cleaned) == 12:
+            cleaned = cleaned[2:]
+        elif cleaned.startswith("0") and len(cleaned) == 11:
+            cleaned = cleaned[1:]
+        if not re.match(r"^[6-9]\d{9}$", cleaned):
             raise ValueError("Phone number must be a valid 10-digit Indian number starting with 6, 7, 8, or 9.")
-        return s
+        return cleaned
 
 
 class CustomerAddressUpdate(BaseModel):
     title: Optional[str] = None
     name: Optional[str] = None
+    house_number: Optional[str] = None
     street: Optional[str] = None
+    area: Optional[str] = None
+    landmark: Optional[str] = None
     city: Optional[str] = None
+    district: Optional[str] = None
     state: Optional[str] = None
     zip: Optional[str] = None
     phone: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    formatted_address: Optional[str] = None
+    google_place_id: Optional[str] = None
+    location_source: Optional[str] = None
+    location_verified: Optional[bool] = None
     isDefault: Optional[bool] = None
 
     @field_validator("title", mode="before")
@@ -380,14 +405,27 @@ class CustomerAddressResponse(BaseModel):
     id: str
     title: str
     name: str
+    house_number: Optional[str] = None
     street: str
+    area: Optional[str] = None
+    landmark: Optional[str] = None
     city: str
+    district: Optional[str] = None
     state: str
     zip: str
     phone: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    formatted_address: Optional[str] = None
+    google_place_id: Optional[str] = None
+    location_source: Optional[str] = "MANUAL"
+    location_verified: Optional[bool] = False
     isDefault: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
 
 
 # ==========================================================
