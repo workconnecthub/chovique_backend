@@ -46,31 +46,17 @@ def get_public_url(key: str) -> str:
     """
     clean_key = key.lstrip("/")
 
-    # Option 1: Use the Tigris / S3-compatible CDN public URL directly.
-    # This is the correct path when S3_PUBLIC_BASE_URL is configured.
-    custom_base = settings.S3_PUBLIC_BASE_URL.rstrip("/")
-    if custom_base:
-        url = f"{custom_base}/{clean_key}"
-        logger.debug("get_public_url → CDN: %s", url)
-        return url
-
-    # Option 2: Route through our own backend media proxy (presigned-URL redirect).
-    # Requires BACKEND_URL to be set in environment (e.g. on Railway/Render).
     backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
     prefix = getattr(settings, "API_V1_PREFIX", "/api/v1").rstrip("/")
 
-    if backend_url:
-        url = f"{backend_url}{prefix}/media/{clean_key}"
-        logger.debug("get_public_url → backend proxy: %s", url)
-        return url
+    # If S3_PUBLIC_BASE_URL is a dedicated public CDN/domain (NOT private Tigris storageapi.dev)
+    custom_base = (getattr(settings, "S3_PUBLIC_BASE_URL", "") or "").rstrip("/")
+    if custom_base and "storageapi.dev" not in custom_base:
+        return f"{custom_base}/{clean_key}"
 
-    # Option 3: Relative URL — only works when frontend & backend are on the same host.
-    url = f"{prefix}/media/{clean_key}"
-    logger.warning(
-        "get_public_url: No S3_PUBLIC_BASE_URL or BACKEND_URL configured. "
-        "Returning relative URL '%s' — images will break if frontend and backend "
-        "are on different domains. Set BACKEND_URL in your Railway/Render env vars.",
-        url,
-    )
-    return url
+    # Route through backend media proxy (presigned URL redirect)
+    if backend_url:
+        return f"{backend_url}{prefix}/media/{clean_key}"
+
+    return f"{prefix}/media/{clean_key}"
 

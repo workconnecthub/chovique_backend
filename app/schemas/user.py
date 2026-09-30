@@ -119,6 +119,10 @@ class UserResponse(BaseModel):
             except Exception:
                 avatar_url = None
 
+        if avatar_url and "storageapi.dev" in avatar_url:
+            clean_key = avatar_url.split("storageapi.dev/")[-1].lstrip("/")
+            avatar_url = f"/api/v1/media/{clean_key}"
+
         initials = ""
         if full_name:
             initials = "".join(p[0].upper() for p in full_name.split()[:2])
@@ -177,12 +181,16 @@ class SystemUserResponse(BaseModel):
         is_superadmin = (role == "superadmin")
         is_admin = (role in ("admin", "superadmin"))
         initials = "".join(p[0].upper() for p in (user.full_name or "").split()[:2])
+        raw_avatar = getattr(user, "avatar_url", None)
+        if raw_avatar and "storageapi.dev" in raw_avatar:
+            clean_key = raw_avatar.split("storageapi.dev/")[-1].lstrip("/")
+            raw_avatar = f"/api/v1/media/{clean_key}"
         return cls(
             id=str(user.id),
             name=user.full_name or "",
             email=user.email or "",
             role=role,
-            avatar_url=user.avatar_url,
+            avatar_url=raw_avatar,
             avatar=initials,
             permissions=PermissionsSchema(
                 viewAnalytics=is_admin,

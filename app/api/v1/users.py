@@ -43,6 +43,24 @@ async def get_me(
         except Exception:
             pass
 
+    # Normalize any direct private storageapi.dev URLs to backend media proxy
+    if current_user.avatar_url and "storageapi.dev/" in current_user.avatar_url:
+        import re
+        from app.core.config import settings
+        match = re.search(r"storageapi\.dev/(.+)$", current_user.avatar_url)
+        if match:
+            clean_key = match.group(1).lstrip("/")
+            prefix = getattr(settings, "API_V1_PREFIX", "/api/v1").rstrip("/")
+            backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
+            proxy_url = f"{backend_url}{prefix}/media/{clean_key}" if backend_url else f"{prefix}/media/{clean_key}"
+            current_user.avatar_url = proxy_url
+            try:
+                db.add(current_user)
+                await db.commit()
+                await db.refresh(current_user)
+            except Exception:
+                pass
+
     user = UserResponse.from_orm_user(current_user)
 
     if default_address:

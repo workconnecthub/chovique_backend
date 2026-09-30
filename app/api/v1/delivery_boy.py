@@ -222,6 +222,12 @@ class AssignDeliveryBoyPayload(BaseModel):
     delivery_boy_id: str
 
 
+class BatchAssignDeliveryBoyPayload(BaseModel):
+    order_ids: List[str]
+    delivery_boy_id: str
+
+
+
 class DeliveryBoyProfileResponse(BaseModel):
     id: str
     full_name: str
@@ -875,6 +881,66 @@ async def assign_delivery_boy(
         description=f"Assigned order {order.id} to delivery boy {boy.full_name} ({boy.email})",
     )
     return _order_to_response(order)
+
+
+@admin_router.post(
+    "/orders/batch-assign-delivery-boy",
+    summary="Batch assign multiple local orders to a delivery boy",
+)
+async def batch_assign_delivery_boy(
+    payload: BatchAssignDeliveryBoyPayload,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    if not payload.order_ids:
+        raise HTTPException(status_code=400, detail="At least one order ID must be provided.")
+
+    boy_result = await db.execute(
+        select(User).where(
+            User.id == payload.delivery_boy_id,
+            User.role == "delivery_boy",
+            User.is_active == True,
+        )
+    )
+    boy = boy_result.scalar_one_or_none()
+    if not boy:
+        raise HTTPException(
+            status_code=404,
+            detail="Active delivery executive not found.",
+        )
+
+    orders_result = await db.execute(
+        select(Order).where(Order.id.in_(payload.order_ids))
+    )
+    orders = orders_result.scalars().all()
+    if not orders:
+        raise HTTPException(status_code=404, detail="No matching orders found.")
+
+    for order in orders:
+        order.delivery_boy_id = boy.id
+        order.fulfillment_type = "LOCAL"
+        order.fulfillment_status = "ASSIGNED"
+        order.delivery_accepted_at = None
+        order.delivery_rejected_at = None
+        order.delivery_rejection_reason = None
+
+    await db.commit()
+
+    await log_admin_activity(
+        db=db,
+        admin_id=current_user.id,
+        action="BATCH_ASSIGNED_DELIVERY_BOY",
+        module="delivery",
+        description=f"Batch assigned {len(orders)} order(s) to delivery executive {boy.full_name} ({boy.email})",
+    )
+
+    return {
+        "message": f"Successfully assigned {len(orders)} order(s) to {boy.full_name}.",
+        "count": len(orders),
+        "assigned_order_ids": [o.id for o in orders],
+        "delivery_boy_name": boy.full_name,
+    }
+
 
 
 @admin_router.post(
