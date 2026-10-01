@@ -236,6 +236,62 @@ async def chat(
                 logger.warning("Could not fetch admin context from database: %s", ad_err)
 
         # =====================================================================
+        # ROLE: DELIVERY PARTNER (Assigned Orders, Queue, Route, History)
+        # =====================================================================
+        elif effective_role in ("delivery", "delivery_partner"):
+            try:
+                partner_user_id = current_user.id if current_user else None
+                partner_orders = []
+                if partner_user_id:
+                    stmt = select(Order).where(Order.delivery_boy_id == partner_user_id)
+                    res = await db.execute(stmt.order_by(Order.created_at.desc()))
+                    partner_orders = res.scalars().all()
+
+                assigned_orders = [o for o in partner_orders if o.fulfillment_status == "ASSIGNED"]
+                in_progress_orders = [o for o in partner_orders if o.fulfillment_status in ("ACCEPTED", "PICKED_UP", "OUT_FOR_DELIVERY")]
+                delivered_orders = [o for o in partner_orders if o.fulfillment_status == "DELIVERED"]
+
+                delivery_context = {
+                    "total_assigned": len(partner_orders),
+                    "queue_count": len(assigned_orders),
+                    "in_progress_count": len(in_progress_orders),
+                    "delivered_count": len(delivered_orders),
+                    "assigned_orders_summary": [
+                        {
+                            "id": o.id,
+                            "customer": o.shipping_name or (o.user.full_name if o.user else "Customer"),
+                            "area": o.shipping_area or o.shipping_city or "Local",
+                            "status": o.fulfillment_status,
+                            "total": f"₹{o.total:.0f}" if o.total else "₹0",
+                        }
+                        for o in assigned_orders[:5]
+                    ],
+                    "in_progress_summary": [
+                        {
+                            "id": o.id,
+                            "customer": o.shipping_name or (o.user.full_name if o.user else "Customer"),
+                            "area": o.shipping_area or o.shipping_city or "Local",
+                            "status": o.fulfillment_status,
+                            "total": f"₹{o.total:.0f}" if o.total else "₹0",
+                        }
+                        for o in in_progress_orders[:5]
+                    ],
+                    "delivered_summary": [
+                        {
+                            "id": o.id,
+                            "customer": o.shipping_name or (o.user.full_name if o.user else "Customer"),
+                            "total": f"₹{o.total:.0f}" if o.total else "₹0",
+                        }
+                        for o in delivered_orders[:5]
+                    ],
+                    "hub_name": "Chovique Central Store & Fulfillment Hub",
+                    "hub_address": "Plot 42, Jubilee Hills Road No. 36, Hyderabad, Telangana 500033",
+                    "hub_hours": "09:00 AM – 10:00 PM (Daily Express)",
+                }
+            except Exception as deliv_err:
+                logger.warning("Could not fetch delivery context from database: %s", deliv_err)
+
+        # =====================================================================
         # ROLE: CUSTOMER / GUEST (Catalog & Personal Orders)
         # =====================================================================
         else:
@@ -292,6 +348,7 @@ async def chat(
             role=effective_role,
             admin_context=admin_context,
             superadmin_context=superadmin_context,
+            delivery_context=delivery_context,
         )
 
         # Extract actions formatted like [Action: Label -> /url] or [Button: Label -> /url]
@@ -328,6 +385,17 @@ async def chat(
                         icon = "help"
                     else:
                         icon = "dashboard"
+                elif "/delivery" in dest_url:
+                    if "tab=queue" in dest_url:
+                        icon = "package"
+                    elif "tab=route" in dest_url:
+                        icon = "route"
+                    elif "tab=history" in dest_url:
+                        icon = "award"
+                    elif "tab=profile" in dest_url:
+                        icon = "user"
+                    else:
+                        icon = "navigation"
                 elif "/shop" in dest_url:
                     icon = "shop"
                 elif "/product/" in dest_url:

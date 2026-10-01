@@ -105,8 +105,10 @@ def _order_to_response(order: Order) -> dict:
         customer_phone = order.user.phone
 
     delivery_boy_name = None
+    delivery_boy_phone = None
     if order.delivery_boy:
         delivery_boy_name = order.delivery_boy.full_name
+        delivery_boy_phone = order.delivery_boy.phone
 
     store_name = None
     if order.store_location:
@@ -147,6 +149,7 @@ def _order_to_response(order: Order) -> dict:
         fulfillment_status=order.fulfillment_status,
         delivery_boy_id=order.delivery_boy_id,
         delivery_boy_name=delivery_boy_name,
+        delivery_boy_phone=delivery_boy_phone,
         store_location_id=order.store_location_id,
         store_name=store_name,
         invoice_url=order.invoice_url,
@@ -351,33 +354,28 @@ async def get_assigned_orders(
 
     if current_user.role in ("admin", "superadmin"):
         # Supervisor mode: if orders are assigned specifically to admin user, return those;
-        # otherwise return all assigned or active fulfillment orders so the admin can supervise/test fleet operations.
+        # otherwise return assigned fulfillment orders with an assigned delivery partner.
         admin_assigned_count = await db.scalar(
             select(func.count(Order.id)).where(Order.delivery_boy_id == current_user.id)
         )
         if admin_assigned_count and admin_assigned_count > 0:
             stmt = select(Order).where(Order.delivery_boy_id == current_user.id)
-            if status_filter:
-                stmt = stmt.where(Order.fulfillment_status == status_filter.upper())
         else:
-            stmt = select(Order)
-            if status_filter:
-                stmt = stmt.where(Order.fulfillment_status == status_filter.upper())
-            else:
-                # Prioritize active delivery fulfillment orders or orders with assigned delivery boys
-                stmt = stmt.where(
-                    (Order.delivery_boy_id.isnot(None))
-                    | (Order.fulfillment_status.in_(["ASSIGNED", "ACCEPTED", "PICKED_UP", "OUT_FOR_DELIVERY", "DELIVERED"]))
-                )
+            stmt = select(Order).where(Order.delivery_boy_id.isnot(None)).where(Order.fulfillment_status != "UNASSIGNED")
+
+        if status_filter:
+            stmt = stmt.where(Order.fulfillment_status == status_filter.upper())
+
         result = await db.execute(stmt.order_by(Order.created_at.desc()).limit(50))
         orders = result.scalars().all()
-        # Fallback if no delivery-specific orders exist yet in test environment: show latest orders
-        if not orders and not status_filter:
-            recent_res = await db.execute(select(Order).order_by(Order.created_at.desc()).limit(10))
-            orders = recent_res.scalars().all()
         return [_order_to_response(o) for o in orders]
 
-    stmt = select(Order).where(Order.delivery_boy_id == current_user.id)
+    # For delivery partner: strictly only orders assigned to this user and not UNASSIGNED
+    stmt = (
+        select(Order)
+        .where(Order.delivery_boy_id == current_user.id)
+        .where(Order.fulfillment_status != "UNASSIGNED")
+    )
     if status_filter:
         stmt = stmt.where(Order.fulfillment_status == status_filter.upper())
 
@@ -385,6 +383,127 @@ async def get_assigned_orders(
     orders = result.scalars().all()
     return [_order_to_response(o) for o in orders]
 
+
+
+async def _notify_customer_delivery_assigned(db: AsyncSession, order: Order, delivery_boy: Optional[User] = None):
+    """Send in-app notification and email to customer when a delivery partner accepts an order."""
+    try:
+        from app.repositories.notification_repository import NotificationRepository
+        from app.integrations.resend import resend_email
+        import asyncio
+
+        boy = delivery_boy or order.delivery_boy
+        if not boy and order.delivery_boy_id:
+            boy_res = await db.execute(select(User).where(User.id == order.delivery_boy_id))
+            boy = boy_res.scalar_one_or_none()
+
+        boy_name = boy.full_name if boy else "Our Delivery Partner"
+        boy_phone = boy.phone if boy and boy.phone else ""
+
+        # 1. In-App Notification
+        if order.user_id:
+            msg_phone = f" (Contact: {boy_phone})" if boy_phone else ""
+            notif_repo = NotificationRepository(db)
+            await notif_repo.create(
+                user_id=order.user_id,
+                type="order",
+                title="Delivery Partner Assigned & Accepted",
+                message=f"Order #{order.id} has been accepted by delivery partner {boy_name}{msg_phone}. They will collect and deliver your order shortly.",
+                text=f"Order #{order.id} accepted by delivery partner {boy_name}.",
+                related_entity_type="order",
+                related_entity_id=order.id,
+                reference_id=order.id,
+            )
+
+        # 2. Customer Email Notification
+        cust_email = None
+        cust_name = "Valued Customer"
+        if getattr(order, "user", None) and order.user.email:
+            cust_email = order.user.email
+            cust_name = order.user.full_name or "Valued Customer"
+        elif order.user_id:
+            user_res = await db.execute(select(User).where(User.id == order.user_id))
+            user_obj = user_res.scalar_one_or_none()
+            if user_obj:
+                cust_email = user_obj.email
+                cust_name = user_obj.full_name or "Valued Customer"
+
+        if cust_email:
+            asyncio.create_task(
+                resend_email.send_delivery_partner_assigned(
+                    email=cust_email,
+                    name=cust_name,
+                    order_id=order.id,
+                    delivery_boy_name=boy_name,
+                    delivery_boy_phone=boy_phone,
+                    estimated_delivery="Today",
+                )
+            )
+            logger.info("Dispatched delivery partner assigned email for order %s to %s", order.id, cust_email)
+    except Exception as e:
+        logger.error("Failed to send delivery assigned notification for order %s: %s", order.id, e)
+
+
+async def _notify_customer_out_for_delivery(db: AsyncSession, order: Order, delivery_boy: Optional[User] = None):
+    """Send in-app notification and email to customer with OTP when marked Out for Delivery."""
+    try:
+        from app.repositories.notification_repository import NotificationRepository
+        from app.integrations.resend import resend_email
+        import asyncio
+
+        boy = delivery_boy or order.delivery_boy
+        if not boy and order.delivery_boy_id:
+            boy_res = await db.execute(select(User).where(User.id == order.delivery_boy_id))
+            boy = boy_res.scalar_one_or_none()
+
+        boy_name = boy.full_name if boy else "Our Delivery Partner"
+        boy_phone = boy.phone if boy and boy.phone else ""
+        otp = order.delivery_otp or ""
+
+        # 1. In-App Notification with OTP
+        if order.user_id:
+            msg_otp = f" Your 6-digit delivery confirmation OTP is {otp}." if otp else ""
+            msg_phone = f" (Contact: {boy_phone})" if boy_phone else ""
+            notif_repo = NotificationRepository(db)
+            await notif_repo.create(
+                user_id=order.user_id,
+                type="order",
+                title="Order Out for Delivery – OTP Inside",
+                message=f"Order #{order.id} is out for delivery with {boy_name}{msg_phone}!{msg_otp} Please provide this 6-digit code at delivery.",
+                text=f"Order #{order.id} is out for delivery. OTP: {otp}",
+                related_entity_type="order",
+                related_entity_id=order.id,
+                reference_id=order.id,
+            )
+
+        # 2. Customer Email Notification with OTP
+        cust_email = None
+        cust_name = "Valued Customer"
+        if getattr(order, "user", None) and order.user.email:
+            cust_email = order.user.email
+            cust_name = order.user.full_name or "Valued Customer"
+        elif order.user_id:
+            user_res = await db.execute(select(User).where(User.id == order.user_id))
+            user_obj = user_res.scalar_one_or_none()
+            if user_obj:
+                cust_email = user_obj.email
+                cust_name = user_obj.full_name or "Valued Customer"
+
+        if cust_email:
+            asyncio.create_task(
+                resend_email.send_out_for_delivery(
+                    email=cust_email,
+                    name=cust_name,
+                    order_id=order.id,
+                    delivery_otp=otp,
+                    delivery_boy_name=boy_name,
+                    delivery_boy_phone=boy_phone,
+                    estimated_delivery="Today",
+                )
+            )
+            logger.info("Dispatched Out for Delivery email with OTP for order %s to %s", order.id, cust_email)
+    except Exception as e:
+        logger.error("Failed to send out for delivery notification for order %s: %s", order.id, e)
 
 @router.post(
     "/orders/{order_id}/accept",
@@ -423,6 +542,10 @@ async def accept_order(
 
     await db.commit()
     await db.refresh(order)
+
+    # Notify customer via in-app notification & email with delivery person details
+    await _notify_customer_delivery_assigned(db, order, delivery_boy=current_user)
+
     return _order_to_response(order)
 
 
@@ -458,6 +581,8 @@ async def batch_accept_orders(
         count += 1
 
     await db.commit()
+    for o in orders:
+        await _notify_customer_delivery_assigned(db, o, delivery_boy=current_user)
     return {"message": f"{count} orders accepted successfully.", "count": count}
 
 
@@ -577,6 +702,9 @@ async def mark_out_for_delivery(
 
     await db.commit()
     await db.refresh(order)
+
+    # Notify customer via in-app notification & email with delivery OTP
+    await _notify_customer_out_for_delivery(db, order, delivery_boy=current_user)
 
     resp = _order_to_response(order)
     return {

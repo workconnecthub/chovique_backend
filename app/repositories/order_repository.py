@@ -173,7 +173,9 @@ class OrderRepository:
         result = await self.db.execute(
             select(Order)
             .options(
-                selectinload(Order.items).selectinload(OrderItem.product)
+                selectinload(Order.items).selectinload(OrderItem.product),
+                selectinload(Order.delivery_boy),
+                selectinload(Order.store_location),
             )
             .where(Order.user_id == user_id)
             .order_by(Order.created_at.desc())
@@ -184,7 +186,9 @@ class OrderRepository:
         result = await self.db.execute(
             select(Order)
             .options(
-                selectinload(Order.items).selectinload(OrderItem.product)
+                selectinload(Order.items).selectinload(OrderItem.product),
+                selectinload(Order.delivery_boy),
+                selectinload(Order.store_location),
             )
             .order_by(Order.created_at.desc())
         )
@@ -194,7 +198,9 @@ class OrderRepository:
         result = await self.db.execute(
             select(Order)
             .options(
-                selectinload(Order.items).selectinload(OrderItem.product)
+                selectinload(Order.items).selectinload(OrderItem.product),
+                selectinload(Order.delivery_boy),
+                selectinload(Order.store_location),
             )
             .where(Order.id == order_id)
         )

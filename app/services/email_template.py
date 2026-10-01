@@ -398,16 +398,77 @@ def build_shipping_template(
     )
 
 
+def build_delivery_partner_assigned_template(
+    *,
+    name: str,
+    order_id: str,
+    delivery_boy_name: str = "Chovique Specialist",
+    delivery_boy_phone: str = "",
+    estimated_delivery: str = "Today",
+) -> str:
+    """Build an email notifying customer that a delivery partner has been assigned and accepted."""
+    base_url = _get_base_url()
+    rows = [
+        ("Order ID", f"#{order_id}"),
+        ("Delivery Executive", delivery_boy_name or "Chovique Specialist"),
+    ]
+    if delivery_boy_phone:
+        rows.append(("Executive Contact", delivery_boy_phone))
+    rows.append(("Fulfillment Status", "Assigned & Accepted"))
+    rows.append(("Estimated Delivery", estimated_delivery))
+
+    return render_luxury_email(
+        subject=f"Delivery Partner Assigned – Order #{order_id}",
+        headline="Your Order is in Expert Hands",
+        recipient_name=name,
+        badge_text="🚴 Delivery Partner Assigned",
+        badge_bg="#EBF5FB",
+        badge_color="#2980B9",
+        body_paragraphs=[
+            f"Wonderful news! Your order <strong>#{order_id}</strong> has been assigned to and accepted by our delivery partner <strong>{delivery_boy_name}</strong>.",
+            "They will be collecting your chilled, artisanal confections shortly to ensure they arrive in flawless condition.",
+        ],
+        summary_card_rows=rows,
+        cta_text="View Order in Dashboard",
+        cta_url=f"{base_url}/dashboard?tab=orders&order_id={order_id}",
+        tip_note="🍫 When your delivery partner heads to your doorstep, a secure 6-digit Delivery OTP will be generated for package verification.",
+    )
+
+
 def build_out_for_delivery_template(
     *,
     name: str,
     order_id: str,
+    delivery_otp: str = "",
+    delivery_boy_name: str = "",
+    delivery_boy_phone: str = "",
     estimated_delivery: str = "Today",
 ) -> str:
-    """Build an out-for-delivery alert email."""
+    """Build an out-for-delivery alert email with prominent OTP."""
     base_url = _get_base_url()
+    rows = [
+        ("Order ID", f"#{order_id}"),
+    ]
+    if delivery_boy_name:
+        rows.append(("Delivery Executive", delivery_boy_name))
+    if delivery_boy_phone:
+        rows.append(("Executive Phone", delivery_boy_phone))
+    rows.append(("Fulfillment Status", "Out for Delivery"))
+    rows.append(("Estimated Arrival", estimated_delivery))
+
+    highlight_html = ""
+    if delivery_otp:
+        otp_digits = " ".join(list(delivery_otp))
+        highlight_html = f"""
+        <div class="email-otp-box" style="background: #FFF8E7; border: 2px dashed #D4AF37; border-radius: 12px; padding: 20px 24px; display: inline-block; max-width: 380px;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #8A6D3B; font-weight: 700; margin-bottom: 8px;">Delivery Verification OTP</div>
+          <div class="email-otp-code" style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #1E100A; font-family: monospace;">{otp_digits}</div>
+          <div style="font-size: 12px; color: #7A6D66; margin-top: 8px;">Please share this confidential 6-digit OTP with your delivery executive upon package handover.</div>
+        </div>
+        """
+
     return render_luxury_email(
-        subject=f"Out for Delivery Today! – #{order_id}",
+        subject=f"Out for Delivery Today! (OTP Inside) – #{order_id}",
         headline="Pure Indulgence Arrives Today!",
         recipient_name=name,
         badge_text="⚡ Out for Delivery",
@@ -417,9 +478,11 @@ def build_out_for_delivery_template(
             f"The delivery partner has collected your package for order <strong>#{order_id}</strong> and is out for delivery in your area.",
             f"Your order is scheduled for arrival: <strong>{estimated_delivery}</strong>.",
         ],
-        cta_text="View Delivery Details",
-        cta_url=f"{base_url}/dashboard",
-        tip_note="🍫 Please have your phone ready in case our courier partner calls upon arrival.",
+        highlight_box_html=highlight_html,
+        summary_card_rows=rows,
+        cta_text="View Delivery Details & OTP",
+        cta_url=f"{base_url}/dashboard?tab=orders&order_id={order_id}",
+        tip_note="🔒 <strong>Security Notice:</strong> Only provide your OTP once you receive your chilled Chovique packaging at your doorstep.",
     )
 
 

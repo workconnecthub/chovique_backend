@@ -819,11 +819,41 @@ class AdminService:
                         )
                     )
                 elif new_status == "Out for Delivery":
+                    import random
+                    if not getattr(order, "delivery_otp", None):
+                        order.delivery_otp = str(random.randint(100000, 999999))
+                        order.delivery_otp_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+                    order.fulfillment_status = "OUT_FOR_DELIVERY"
+
+                    boy_name = getattr(order.delivery_boy, "full_name", None) if getattr(order, "delivery_boy", None) else None
+                    boy_phone = getattr(order.delivery_boy, "phone", None) if getattr(order, "delivery_boy", None) else None
+
+                    # Create internal notification
+                    try:
+                        from app.repositories.notification_repository import NotificationRepository
+                        notif_repo = NotificationRepository(self.db)
+                        msg_otp = f" Your delivery verification OTP is {order.delivery_otp}." if order.delivery_otp else ""
+                        await notif_repo.create(
+                            user_id=order.user_id,
+                            type="order",
+                            title="Order Out for Delivery – OTP Inside",
+                            message=f"Order #{order.id} is out for delivery!{msg_otp} Please provide this 6-digit code upon arrival.",
+                            text=f"Order #{order.id} is out for delivery. OTP: {order.delivery_otp}",
+                            related_entity_type="order",
+                            related_entity_id=order.id,
+                            reference_id=order.id,
+                        )
+                    except Exception as notif_err:
+                        logger.warning("Failed to create out-for-delivery notification: %s", notif_err)
+
                     asyncio.create_task(
                         resend_email.send_out_for_delivery(
                             email=user.email,
                             name=user.full_name or "Valued Customer",
                             order_id=order.id,
+                            delivery_otp=order.delivery_otp or "",
+                            delivery_boy_name=boy_name or "",
+                            delivery_boy_phone=boy_phone or "",
                         )
                     )
                 elif new_status == "Cancelled":

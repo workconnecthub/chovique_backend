@@ -149,6 +149,7 @@ class GeminiService:
         role: str = "guest",
         admin_context: dict | None = None,
         superadmin_context: dict | None = None,
+        delivery_context: dict | None = None,
     ) -> str:
         """Compose dynamic, real-time system instruction incorporating database context and user role."""
         parts = [CHOVIQUE_SYSTEM_INSTRUCTION]
@@ -244,7 +245,67 @@ Rules for Admin Role:
             )
 
         # =====================================================================
-        # 3. CUSTOMER OR GUEST CONTEXT
+        # 3. DELIVERY PARTNER ROLE CONTEXT
+        # =====================================================================
+        elif role_lower in ("delivery", "delivery_partner") and delivery_context:
+            assigned_summary_lines = [
+                f"- Order #{o['id']}: Customer {o['customer']}, Area: {o['area']}, Total: {o['total']}"
+                for o in delivery_context.get("assigned_orders_summary", [])
+            ]
+            in_prog_summary_lines = [
+                f"- Order #{o['id']}: Customer {o['customer']}, Area: {o['area']}, Status: {o['status']}"
+                for o in delivery_context.get("in_progress_summary", [])
+            ]
+            parts.append(
+                f"""
+## Authenticated Delivery Partner Context
+- Partner Name: {customer_name or 'Delivery Partner'}
+- Verified Role: Chovique Authorized Delivery Partner / Courier Executive
+- Live Assigned Orders & Queue Status:
+  * Total Assigned Batch Orders: {delivery_context.get('total_assigned', 0)}
+  * Orders in Assigned Queue (Waiting Acceptance): {delivery_context.get('queue_count', 0)}
+  * Orders In Progress / En Route: {delivery_context.get('in_progress_count', 0)}
+  * Orders Delivered Today: {delivery_context.get('delivered_count', 0)}
+- Assigned Queue Summary:
+{chr(10).join(assigned_summary_lines) if assigned_summary_lines else "No orders currently pending in queue."}
+- In-Progress Orders:
+{chr(10).join(in_prog_summary_lines) if in_prog_summary_lines else "No active deliveries in progress."}
+- Fulfillment Hub:
+  * Name: {delivery_context.get('hub_name', 'Chovique Central Store & Fulfillment Hub')}
+  * Address: {delivery_context.get('hub_address', 'Plot 42, Jubilee Hills Road No. 36, Hyderabad, Telangana 500033')}
+  * Dispatch Hours: {delivery_context.get('hub_hours', '09:00 AM – 10:00 PM')}
+
+Rules for Delivery Partner Role:
+1. GREETING:
+   When greeting or starting chat, greet warmly:
+   "Welcome back, Delivery Partner {customer_name or ''}! 🍫🛵 Ready to assist with your active missions, order queues, route navigation, or OTP verification."
+2. QUEUE & ORDERS INQUIRY:
+   - State the exact count of assigned orders in the queue ({delivery_context.get('queue_count', 0)}) and active deliveries ({delivery_context.get('in_progress_count', 0)}).
+   - If there are assigned orders waiting, remind them to review and accept them in the Queue tab.
+   - MANDATORY ACTION: [Action: View Assigned Queue -> /delivery?tab=queue]
+3. ROUTE & NAVIGATION:
+   - Explain that deliveries are prioritized by proximity (nearest GPS distance first).
+   - MANDATORY ACTION: [Action: View Delivery Route -> /delivery?tab=route]
+4. DELIVERY HISTORY:
+   - State that {delivery_context.get('delivered_count', 0)} orders have been completed and verified today.
+   - MANDATORY ACTION: [Action: View Delivery History -> /delivery?tab=history]
+5. OTP HANDOFF & VERIFICATION:
+   - Explain the 3-step OTP protocol:
+     1. Ask customer for their 6-digit delivery OTP (sent to their SMS/app).
+     2. Input the code into the Active Delivery card.
+     3. Click 'Verify OTP & Complete Delivery'.
+     If customer did not receive it, tell them they can tap 'Resend OTP' on their order tracking page.
+   - MANDATORY ACTION: [Action: View Active Mission -> /delivery?tab=mission]
+6. HUB & FULFILLMENT:
+   - Provide fulfillment center address ({delivery_context.get('hub_address')}).
+   - MANDATORY ACTION: [Action: View Profile & Hub -> /delivery?tab=profile]
+7. STRICT BOUNDARY:
+   - NEVER suggest shopping links (/shop, /cart, /product) to delivery partners. Keep all actions within /delivery.
+""".strip()
+            )
+
+        # =====================================================================
+        # 4. CUSTOMER OR GUEST CONTEXT
         # =====================================================================
         else:
             if customer_name:
@@ -380,6 +441,7 @@ Always include 1 to 3 relevant [Action: Button Label -> /target-url] buttons at 
         role: str = "guest",
         admin_context: dict | None = None,
         superadmin_context: dict | None = None,
+        delivery_context: dict | None = None,
     ) -> str:
         """
         Send a message to Gemini via the Chat API and return the assistant's reply.
@@ -409,6 +471,7 @@ Always include 1 to 3 relevant [Action: Button Label -> /target-url] buttons at 
             role=role,
             admin_context=admin_context,
             superadmin_context=superadmin_context,
+            delivery_context=delivery_context,
         )
 
         candidate_models = [
@@ -478,6 +541,7 @@ Always include 1 to 3 relevant [Action: Button Label -> /target-url] buttons at 
             role=role,
             admin_context=admin_context,
             superadmin_context=superadmin_context,
+            delivery_context=delivery_context,
         )
 
     def _generate_graceful_fallback(
@@ -488,6 +552,7 @@ Always include 1 to 3 relevant [Action: Button Label -> /target-url] buttons at 
         role: str = "guest",
         admin_context: dict | None = None,
         superadmin_context: dict | None = None,
+        delivery_context: dict | None = None,
     ) -> str:
         """Intelligent offline fallback ensuring Coco ALWAYS answers accurately from database with redirect buttons."""
         msg = message.lower()
@@ -603,6 +668,83 @@ Always include 1 to 3 relevant [Action: Button Label -> /target-url] buttons at 
                 "[Action: Manage Products & Stock -> /admin?section=products]\n"
                 "[Action: View Orders -> /admin?section=orders]\n"
                 "[Action: Admin Dashboard -> /admin?section=dashboard]"
+            )
+
+        # =====================================================================
+        # DELIVERY PARTNER FALLBACK (Accurate DB counts & Workflow)
+        # =====================================================================
+        if role_lower in ("delivery", "delivery_partner") and delivery_context:
+            greeting = f"Hello Delivery Partner {customer_name or ''}! 🍫🛵 "
+            queue_cnt = delivery_context.get("queue_count", 0)
+            in_prog_cnt = delivery_context.get("in_progress_count", 0)
+            deliv_cnt = delivery_context.get("delivered_count", 0)
+            hub_addr = delivery_context.get("hub_address", "Plot 42, Jubilee Hills Road No. 36, Hyderabad")
+
+            # 1. Queue / assigned orders
+            if any(w in msg for w in ["queue", "assigned", "new order", "orders to deliver", "pending"]):
+                if queue_cnt > 0:
+                    return (
+                        f"{greeting}You currently have **{queue_cnt} order(s) waiting in your assigned queue** to be accepted and fulfilled, "
+                        f"and **{in_prog_cnt} active deliveries** currently in progress. Tap below to review your assigned orders.\n\n"
+                        "[Action: View Assigned Queue -> /delivery?tab=queue]\n"
+                        "[Action: View Active Mission -> /delivery?tab=mission]"
+                    )
+                else:
+                    return (
+                        f"{greeting}Your assigned queue is currently clear (**0 orders waiting**). "
+                        f"You have **{in_prog_cnt} deliveries in progress** and **{deliv_cnt} delivered today**. Ensure your duty toggle is **ON** to receive incoming dispatch orders.\n\n"
+                        "[Action: View Assigned Queue -> /delivery?tab=queue]\n"
+                        "[Action: View Delivery Route -> /delivery?tab=route]"
+                    )
+
+            # 2. Route / navigation / next stop
+            if any(w in msg for w in ["route", "map", "navigation", "nearest", "next stop", "where to go", "direction"]):
+                return (
+                    f"{greeting}Your delivery route optimizes drop-offs by shortest GPS distance (nearest stop first). "
+                    f"You have **{in_prog_cnt} active stops** on your delivery circuit. Tap below to launch your multi-stop route map.\n\n"
+                    "[Action: View Delivery Route -> /delivery?tab=route]\n"
+                    "[Action: View Active Mission -> /delivery?tab=mission]"
+                )
+
+            # 3. History / delivered orders
+            if any(w in msg for w in ["history", "delivered", "completed", "past"]):
+                return (
+                    f"{greeting}You have completed **{deliv_cnt} deliveries today** with verified customer OTP handoff. "
+                    "Review your full delivery log, timestamps, and order receipts in your Delivery History.\n\n"
+                    "[Action: View Delivery History -> /delivery?tab=history]\n"
+                    "[Action: View Profile & Hub -> /delivery?tab=profile]"
+                )
+
+            # 4. OTP / Handover help
+            if any(w in msg for w in ["otp", "code", "pin", "verify", "verification", "handover"]):
+                return (
+                    f"{greeting}Here is the secure OTP delivery verification protocol:\n\n"
+                    "1. When arriving at the delivery location, ask the customer for their **6-digit delivery OTP**.\n"
+                    "2. Enter the digits into the verification input on your **Active Mission** card.\n"
+                    "3. Click **'Verify OTP & Complete Delivery'** to finalize the order.\n\n"
+                    "*Note: If the customer cannot locate the OTP, instruct them to tap 'Resend OTP' on their order tracking screen.*\n\n"
+                    "[Action: View Active Mission -> /delivery?tab=mission]\n"
+                    "[Action: View Assigned Queue -> /delivery?tab=queue]"
+                )
+
+            # 5. Hub / Fulfillment Center
+            if any(w in msg for w in ["hub", "center", "store", "warehouse", "location", "address", "dispatch"]):
+                return (
+                    f"{greeting}Your central dispatch fulfillment center is:\n\n"
+                    f"**{delivery_context.get('hub_name', 'Chovique Central Store & Fulfillment Hub')}**\n"
+                    f"{hub_addr}\n"
+                    f"*Dispatch Hours: {delivery_context.get('hub_hours', '09:00 AM – 10:00 PM (Daily Express)')}*\n\n"
+                    "[Action: View Profile & Hub -> /delivery?tab=profile]\n"
+                    "[Action: View Assigned Queue -> /delivery?tab=queue]"
+                )
+
+            # Default Delivery Fallback
+            return (
+                f"{greeting}I'm Coco, your delivery dispatch assistant. You have **{queue_cnt} orders in queue**, "
+                f"**{in_prog_cnt} active en-route**, and **{deliv_cnt} delivered today**. How can I help you navigate or fulfill your orders?\n\n"
+                "[Action: View Assigned Queue -> /delivery?tab=queue]\n"
+                "[Action: View Delivery Route -> /delivery?tab=route]\n"
+                "[Action: View Delivery History -> /delivery?tab=history]"
             )
 
         # =====================================================================

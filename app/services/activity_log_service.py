@@ -188,3 +188,13 @@ class ActivityLogService:
             limit=limit,
         )
 
+    async def delete_activity_logs(self, log_ids: List[str]) -> int:
+        """Delete multiple activity logs by their IDs."""
+        if not log_ids:
+            return 0
+        from sqlalchemy import delete
+        stmt = delete(AuditLog).where(AuditLog.id.in_(log_ids))
+        res = await self.db.execute(stmt)
+        await self.db.commit()
+        return res.rowcount or 0
+

@@ -81,6 +81,7 @@ class OrderResponse(BaseModel):
     fulfillment_status: Optional[str] = "UNASSIGNED"
     delivery_boy_id: Optional[str] = None
     delivery_boy_name: Optional[str] = None
+    delivery_boy_phone: Optional[str] = None
     store_location_id: Optional[str] = None
     store_name: Optional[str] = None
     invoice_url: Optional[str] = None

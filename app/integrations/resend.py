@@ -7,6 +7,7 @@ from app.services.email_template import (
     build_welcome_template,
     build_order_confirmation_template,
     build_shipping_template,
+    build_delivery_partner_assigned_template,
     build_out_for_delivery_template,
     build_delivered_template,
     build_cancellation_template,
@@ -594,14 +595,45 @@ class ResendEmailIntegration:
         )
         return await self.send_email(email, subject, html, context_label="Order shipped")
 
-    async def send_out_for_delivery(self, email: str, name: str, order_id: str, estimated_delivery: str = "Today"):
-        subject = f"Out for Delivery Today! – #{order_id}"
+    async def send_out_for_delivery(
+        self,
+        email: str,
+        name: str,
+        order_id: str,
+        delivery_otp: str = "",
+        delivery_boy_name: str = "",
+        delivery_boy_phone: str = "",
+        estimated_delivery: str = "Today",
+    ):
+        subject = f"Out for Delivery Today! (OTP Inside) – #{order_id}"
         html = build_out_for_delivery_template(
             name=name,
             order_id=order_id,
+            delivery_otp=delivery_otp,
+            delivery_boy_name=delivery_boy_name,
+            delivery_boy_phone=delivery_boy_phone,
             estimated_delivery=estimated_delivery,
         )
         return await self.send_email(email, subject, html, context_label="Out for delivery")
+
+    async def send_delivery_partner_assigned(
+        self,
+        email: str,
+        name: str,
+        order_id: str,
+        delivery_boy_name: str = "Chovique Specialist",
+        delivery_boy_phone: str = "",
+        estimated_delivery: str = "Today",
+    ):
+        subject = f"Delivery Partner Assigned – Order #{order_id}"
+        html = build_delivery_partner_assigned_template(
+            name=name,
+            order_id=order_id,
+            delivery_boy_name=delivery_boy_name,
+            delivery_boy_phone=delivery_boy_phone,
+            estimated_delivery=estimated_delivery,
+        )
+        return await self.send_email(email, subject, html, context_label="Delivery partner assigned")
 
     async def send_order_delivered(
         self,

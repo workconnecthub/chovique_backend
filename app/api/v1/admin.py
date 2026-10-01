@@ -233,6 +233,46 @@ async def get_admin_activity_logs(
     )
 
 
+class DeleteActivityLogsRequest(BaseModel):
+    log_ids: List[str]
+
+
+@router.delete("/activity-logs", summary="Delete selected admin activity logs")
+async def delete_admin_activity_logs(
+    payload: DeleteActivityLogsRequest,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = ActivityLogService(db)
+    count = await service.delete_activity_logs(payload.log_ids)
+    await log_admin_activity(
+        db=db,
+        admin_id=current_user.id,
+        action="DELETE_ACTIVITY_LOGS",
+        module="audit",
+        description=f"Deleted {count} activity log(s).",
+    )
+    return {"deleted": count, "message": f"Successfully deleted {count} activity log(s)."}
+
+
+@router.post("/activity-logs/delete", summary="Delete selected admin activity logs (POST fallback)")
+async def delete_admin_activity_logs_post(
+    payload: DeleteActivityLogsRequest,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = ActivityLogService(db)
+    count = await service.delete_activity_logs(payload.log_ids)
+    await log_admin_activity(
+        db=db,
+        admin_id=current_user.id,
+        action="DELETE_ACTIVITY_LOGS",
+        module="audit",
+        description=f"Deleted {count} activity log(s).",
+    )
+    return {"deleted": count, "message": f"Successfully deleted {count} activity log(s)."}
+
+
 # ======================================================
 # ADMIN LOGOUT
 # ======================================================

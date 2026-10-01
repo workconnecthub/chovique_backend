@@ -880,6 +880,7 @@ class CustomerService:
 
         delivery_boy_obj = getattr(order, "delivery_boy", None)
         delivery_boy_name = getattr(delivery_boy_obj, "full_name", None) if delivery_boy_obj else None
+        delivery_boy_phone = getattr(delivery_boy_obj, "phone", None) if delivery_boy_obj else None
 
         return OrderResponse(
             id=str(order.id),
@@ -905,6 +906,7 @@ class CustomerService:
             fulfillment_status=getattr(order, "fulfillment_status", "UNASSIGNED") or "UNASSIGNED",
             delivery_boy_id=getattr(order, "delivery_boy_id", None),
             delivery_boy_name=delivery_boy_name,
+            delivery_boy_phone=delivery_boy_phone,
             store_location_id=getattr(order, "store_location_id", None),
             store_name=store_name_val,
             invoice_url=getattr(order, "invoice_url", None),
