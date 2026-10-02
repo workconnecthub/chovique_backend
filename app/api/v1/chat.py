@@ -9,11 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user_optional
 from app.db.session import get_db
 from app.models.offline_sale import OfflineSale
-from app.models.order import Order
+from app.models.order import Order, OrderItem
 from app.models.product import Product
 from app.models.user import User
+from app.repositories.address_repository import AddressRepository
+from app.repositories.cart_repository import CartRepository
 from app.repositories.order_repository import OrderRepository
 from app.repositories.product_repository import ProductRepository
+from app.repositories.wallet_repository import WalletRepository
 from app.schemas.chat import ChatAction, ChatRequest, ChatResponse
 from app.services.gemini_service import gemini_service
 
@@ -72,8 +75,12 @@ async def chat(
     try:
         catalog: list[dict] = []
         user_orders: list[dict] = []
+        customer_addresses: list[dict] = []
+        customer_wallet_coins: int = 0
+        customer_cart: list[dict] = []
         admin_context: Optional[dict] = None
         superadmin_context: Optional[dict] = None
+        delivery_context: Optional[dict] = None
 
         # =====================================================================
         # ROLE: SUPERADMIN (Executive Revenue & Analytics)
@@ -164,6 +171,36 @@ async def chat(
                         f"- {dt_key}: Total = ₹{t_rev:,.2f} ({entry['orders']} orders | Online: ₹{entry['online_rev']:,.2f}, Offline: ₹{entry['offline_rev']:,.2f})"
                     )
 
+                # 4. Total registered customers
+                try:
+                    cust_count_res = await db.execute(
+                        select(func.count(User.id)).where(User.role == "customer")
+                    )
+                    total_customers = int(cust_count_res.scalar() or 0)
+                except Exception:
+                    total_customers = 0
+
+                # 5. Top-selling products by order quantity
+                try:
+                    top_products_res = await db.execute(
+                        select(
+                            Product.name,
+                            func.sum(OrderItem.quantity).label("total_qty"),
+                            func.count(OrderItem.order_id.distinct()).label("order_count"),
+                            Product.price,
+                        )
+                        .join(OrderItem, OrderItem.product_id == Product.id)
+                        .group_by(Product.id, Product.name, Product.price)
+                        .order_by(func.sum(OrderItem.quantity).desc())
+                        .limit(10)
+                    )
+                    top_products_lines = [
+                        f"- **{row[0]}** | {row[2]} orders | {int(row[1] or 0)} units sold | ₹{row[3]:.0f}"
+                        for row in top_products_res.all()
+                    ]
+                except Exception:
+                    top_products_lines = []
+
                 superadmin_context = {
                     "lifetime_revenue": lifetime_revenue,
                     "online_revenue": online_rev,
@@ -182,6 +219,8 @@ async def chat(
                     "month_orders": month_orders,
                     "daily_sales_table": "\n".join(daily_lines) if daily_lines else "No sales recorded in the past 45 days.",
                     "daily_data": daily_data,
+                    "total_customers": total_customers,
+                    "top_products_lines": "\n".join(top_products_lines) if top_products_lines else "No order data yet.",
                 }
             except Exception as sa_err:
                 logger.warning("Could not fetch superadmin context from database: %s", sa_err)
@@ -220,6 +259,35 @@ async def chat(
                 )
                 delivered_orders = int(delivered_res.scalar() or 0)
 
+                # 3. Total registered customers
+                try:
+                    cust_count_res = await db.execute(
+                        select(func.count(User.id)).where(User.role == "customer")
+                    )
+                    total_customers = int(cust_count_res.scalar() or 0)
+                except Exception:
+                    total_customers = 0
+
+                # 4. Top-selling products by order count
+                try:
+                    top_prod_res = await db.execute(
+                        select(
+                            Product.name,
+                            func.sum(OrderItem.quantity).label("total_qty"),
+                            func.count(OrderItem.order_id.distinct()).label("order_count"),
+                        )
+                        .join(OrderItem, OrderItem.product_id == Product.id)
+                        .group_by(Product.id, Product.name)
+                        .order_by(func.sum(OrderItem.quantity).desc())
+                        .limit(5)
+                    )
+                    top_prod_lines = [
+                        f"- **{row[0]}**: ordered in {row[2]} orders, {int(row[1] or 0)} units sold"
+                        for row in top_prod_res.all()
+                    ]
+                except Exception:
+                    top_prod_lines = []
+
                 admin_context = {
                     "total_products": total_products,
                     "total_units": total_units,
@@ -231,6 +299,8 @@ async def chat(
                     "total_orders": total_orders,
                     "pending_orders": pending_orders,
                     "delivered_orders": delivered_orders,
+                    "total_customers": total_customers,
+                    "top_products_lines": "\n".join(top_prod_lines) if top_prod_lines else "No order data yet.",
                 }
             except Exception as ad_err:
                 logger.warning("Could not fetch admin context from database: %s", ad_err)
@@ -238,7 +308,7 @@ async def chat(
         # =====================================================================
         # ROLE: DELIVERY PARTNER (Assigned Orders, Queue, Route, History)
         # =====================================================================
-        elif effective_role in ("delivery", "delivery_partner"):
+        elif effective_role in ("delivery", "delivery_partner", "delivery_boy"):
             try:
                 partner_user_id = current_user.id if current_user else None
                 partner_orders = []
@@ -295,21 +365,47 @@ async def chat(
         # ROLE: CUSTOMER / GUEST (Catalog & Personal Orders)
         # =====================================================================
         else:
+            # Fetch top-selling products (by order quantity) to annotate the catalog for smarter AI recommendations
+            top_sellers_by_orders: list[dict] = []
+            try:
+                top_res = await db.execute(
+                    select(
+                        Product.id,
+                        func.sum(OrderItem.quantity).label("total_qty"),
+                        func.count(OrderItem.order_id.distinct()).label("order_count"),
+                    )
+                    .join(OrderItem, OrderItem.product_id == Product.id)
+                    .group_by(Product.id)
+                    .order_by(func.sum(OrderItem.quantity).desc())
+                    .limit(20)
+                )
+                for row in top_res.all():
+                    top_sellers_by_orders.append({
+                        "id": str(row[0]),
+                        "total_qty": int(row[1] or 0),
+                        "order_count": int(row[2] or 0),
+                    })
+            except Exception as ts_err:
+                logger.warning("Could not fetch top sellers for chatbot: %s", ts_err)
+
             try:
                 prod_repo = ProductRepository(db)
-                prod_res = await prod_repo.get_all(per_page=50)
+                prod_res = await prod_repo.get_all(per_page=16)
                 for p in prod_res.get("items", []):
                     cat_name = getattr(p, "category", "") or (p.category_rel.name if getattr(p, "category_rel", None) else "")
+                    top_seller_info = next((ts for ts in top_sellers_by_orders if ts["id"] == str(p.id)), None)
                     catalog.append({
                         "id": str(p.id),
                         "name": p.name,
                         "price": f"₹{p.price:.0f}" if p.price else "₹0",
                         "category": cat_name,
                         "image": p.image or "",
-                        "description": (p.description or "")[:200],
+                        "description": (p.description or "")[:100],
                         "is_bestseller": bool(p.is_bestseller),
                         "is_featured": bool(p.is_featured),
                         "rating": float(p.rating or 0.0),
+                        "order_count": top_seller_info["order_count"] if top_seller_info else 0,
+                        "total_qty_sold": top_seller_info["total_qty"] if top_seller_info else 0,
                     })
             except Exception as p_err:
                 logger.warning("Could not fetch products for chatbot context: %s", p_err)
@@ -318,7 +414,7 @@ async def chat(
                 try:
                     order_repo = OrderRepository(db)
                     orders = await order_repo.get_user_orders(current_user.id)
-                    for o in orders[:5]:
+                    for o in orders[:10]:
                         items_desc = [
                             f"{it.product.name if it.product else 'Chocolate'} x{it.quantity} (₹{it.price:.0f})"
                             for it in (o.items or [])
@@ -333,23 +429,85 @@ async def chat(
                 except Exception as o_err:
                     logger.warning("Could not fetch user orders for chatbot context: %s", o_err)
 
+                # Fetch customer saved delivery addresses
+                try:
+                    addr_repo = AddressRepository(db)
+                    addrs = await addr_repo.get_user_addresses(current_user.id)
+                    for a in addrs:
+                        customer_addresses.append({
+                            "id": str(a.id),
+                            "title": a.title or "Saved Address",
+                            "name": a.name or (current_user.full_name or "Customer"),
+                            "house_number": getattr(a, "house_number", "") or "",
+                            "street": a.street or "",
+                            "area": getattr(a, "area", "") or "",
+                            "city": a.city or "",
+                            "state": a.state or "",
+                            "zip": a.zip or getattr(a, "pincode", "") or "",
+                            "phone": a.phone or getattr(current_user, "phone", "") or "",
+                            "is_default": bool(a.is_default),
+                        })
+                except Exception as addr_err:
+                    logger.warning("Could not fetch user addresses for chatbot: %s", addr_err)
+
+                # Fetch customer loyalty wallet coins
+                try:
+                    wallet_repo = WalletRepository(db)
+                    w = await wallet_repo.get_or_create_wallet(current_user.id)
+                    if w:
+                        customer_wallet_coins = int(w.coin_balance or 0)
+                        logger.info("Chatbot fetched user wallet: user_id=%s, coins=%d", current_user.id, customer_wallet_coins)
+                except Exception as w_err:
+                    logger.warning("Could not fetch user wallet for chatbot: %s", w_err)
+
+                # Fetch customer active cart
+                try:
+                    cart_repo = CartRepository(db)
+                    c = await cart_repo.get_or_create_user_cart(current_user.id, commit=False)
+                    for it in (c.items or []):
+                        p_price = float(it.product.price) if (it.product and it.product.price) else 0.0
+                        p_name = it.product.name if it.product else "Chocolate"
+                        customer_cart.append({
+                            "product_id": str(it.product_id),
+                            "product_name": p_name,
+                            "price": p_price,
+                            "quantity": it.quantity or 1,
+                        })
+                except Exception as c_err:
+                    logger.warning("Could not fetch user cart for chatbot: %s", c_err)
+
         history_dicts = [
             {"role": turn.role, "content": turn.content}
             for turn in payload.history
         ]
 
         # Call Gemini service with role-specific database context
-        reply = await gemini_service.send_message(
-            message=payload.message,
-            history=history_dicts,
-            customer_name=user_name,
-            customer_orders=user_orders,
-            products_catalog=catalog,
-            role=effective_role,
-            admin_context=admin_context,
-            superadmin_context=superadmin_context,
-            delivery_context=delivery_context,
-        )
+        try:
+            reply = await gemini_service.send_message(
+                message=payload.message,
+                history=history_dicts,
+                customer_name=user_name,
+                customer_orders=user_orders,
+                products_catalog=catalog,
+                role=effective_role,
+                admin_context=admin_context,
+                superadmin_context=superadmin_context,
+                delivery_context=delivery_context,
+                customer_addresses=customer_addresses,
+                customer_wallet_coins=customer_wallet_coins,
+                customer_cart=customer_cart,
+            )
+        except Exception as ai_err:
+            logger.warning("AI generation failed unexpectedly, using graceful fallback: %s", ai_err)
+            reply = gemini_service._generate_graceful_fallback(
+                message=payload.message,
+                customer_name=user_name,
+                customer_orders=user_orders,
+                role=effective_role,
+                admin_context=admin_context,
+                superadmin_context=superadmin_context,
+                delivery_context=delivery_context,
+            )
 
         # Extract actions formatted like [Action: Label -> /url] or [Button: Label -> /url]
         actions: list[ChatAction] = []
@@ -396,20 +554,28 @@ async def chat(
                         icon = "user"
                     else:
                         icon = "navigation"
+                elif "action:select-product" in dest_url:
+                    icon = "shop"
+                elif "action:add-cart" in dest_url or "/cart" in dest_url:
+                    icon = "cart"
+                elif "action:start-checkout" in dest_url or "section=orders" in dest_url or "section=order" in dest_url:
+                    icon = "package"
+                elif "action:use-saved-address" in dest_url or "action:use-location" in dest_url or "action:enter-address" in dest_url:
+                    icon = "user"
+                elif "action:apply-coins" in dest_url or "action:skip-coins" in dest_url or "section=rewards" in dest_url or "section=coins" in dest_url:
+                    icon = "coins"
+                elif "action:pay-cod" in dest_url:
+                    icon = "receipt"
+                elif "action:pay-online" in dest_url:
+                    icon = "credit-card"
                 elif "/shop" in dest_url:
                     icon = "shop"
                 elif "/product/" in dest_url:
                     icon = "product"
-                elif "section=orders" in dest_url or "section=order" in dest_url:
-                    icon = "package"
-                elif "section=rewards" in dest_url or "section=coins" in dest_url:
-                    icon = "coins"
                 elif "section=coupons" in dest_url:
                     icon = "tag"
                 elif "section=help" in dest_url or "/contact" in dest_url:
                     icon = "help"
-                elif "/cart" in dest_url:
-                    icon = "cart"
                 elif "/wishlist" in dest_url:
                     icon = "heart"
 
@@ -468,34 +634,70 @@ async def chat(
 
         else:
             # Customer fallback actions
+            # 1. PAYMENT SELECTION STEP: When Coco asks how customer wants to pay, ALWAYS show COD & Online Payment buttons
+            is_payment_step = any(k in reply_lower for k in [
+                "how would you like to pay", "pay for your order", "payment method", "cash on delivery", "upi / online", "pay today", "choose payment"
+            ]) or any(k in msg_lower for k in [
+                "deliver to saved address", "saved address", "use location", "current location", "confirm address"
+            ])
+            if is_payment_step:
+                if "action:pay-cod" not in seen_urls:
+                    actions.insert(0, ChatAction(label="💵 Cash on Delivery (COD)", url="action:pay-cod", icon="receipt"))
+                    seen_urls.add("action:pay-cod")
+                if "action:pay-online" not in seen_urls:
+                    actions.insert(1, ChatAction(label="💳 UPI / Online Payment", url="action:pay-online", icon="credit-card"))
+                    seen_urls.add("action:pay-online")
+
+            # 2. ADDRESS SELECTION STEP: When Coco asks for delivery address
+            is_address_step = any(k in reply_lower for k in [
+                "saved delivery address", "deliver to this address", "delivery details", "provide your delivery"
+            ])
+            if is_address_step and not is_payment_step:
+                if customer_addresses and "action:use-saved-address" not in seen_urls:
+                    actions.append(ChatAction(label="📍 Deliver to Saved Address", url="action:use-saved-address", icon="user"))
+                    seen_urls.add("action:use-saved-address")
+                if "action:use-location" not in seen_urls:
+                    actions.append(ChatAction(label="📍 Use Current Location", url="action:use-location", icon="user"))
+                    seen_urls.add("action:use-location")
+                if "action:enter-address" not in seen_urls:
+                    actions.append(ChatAction(label="✏️ Enter New Address", url="action:enter-address", icon="user"))
+                    seen_urls.add("action:enter-address")
+
+            is_ordering_query = any(k in msg_lower for k in [
+                "place an order", "place the order", "place order", "order for me", "buy chocolate", "order chocolate", "can you order"
+            ])
+            if is_ordering_query and not actions:
+                actions.append(ChatAction(label="🍫 Order Chocolates", url="action:start-order", icon="shop"))
+                actions.append(ChatAction(label="Visit Shop Page", url="/shop", icon="shop"))
+
             is_product_query = any(k in msg_lower for k in [
                 "chocolate", "chocolates", "product", "products", "hamper", "hampers",
                 "truffle", "truffles", "price", "flavour", "flavor", "gift", "box",
                 "dark", "milk", "white", "shop", "buy", "sell", "collection"
             ]) or any(k in reply_lower for k in ["artisan chocolate", "gift box", "shop page", "collection"])
 
-            if is_product_query and "/shop" not in seen_urls:
+            if is_product_query and not is_payment_step and "/shop" not in seen_urls and len(actions) < 3:
                 actions.append(ChatAction(label="Visit Shop Page", url="/shop", icon="shop"))
                 seen_urls.add("/shop")
 
             is_order_query = any(k in msg_lower for k in [
-                "order", "orders", "track", "tracking", "status", "shipment", "delivery"
-            ])
-            if is_order_query and "/dashboard?section=orders" not in seen_urls:
+                "track", "tracking", "shipment", "where is"
+            ]) or ("order" in msg_lower and not is_ordering_query and not is_payment_step)
+            if is_order_query and "/dashboard?section=orders" not in seen_urls and len(actions) < 3:
                 actions.append(ChatAction(label="Track Orders in Dashboard", url="/dashboard?section=orders", icon="package"))
                 seen_urls.add("/dashboard?section=orders")
 
-            if any(k in msg_lower for k in ["coin", "coins", "wallet", "rewards", "points"]):
+            if any(k in msg_lower for k in ["coin", "coins", "wallet", "rewards", "points"]) and not is_payment_step:
                 if "/dashboard?section=rewards" not in seen_urls:
                     actions.append(ChatAction(label="View Rewards & Coins", url="/dashboard?section=rewards", icon="coins"))
                     seen_urls.add("/dashboard?section=rewards")
 
-            if any(k in msg_lower for k in ["coupon", "coupons", "discount", "promo", "voucher"]):
+            if any(k in msg_lower for k in ["coupon", "coupons", "discount", "promo", "voucher"]) and not is_payment_step:
                 if "/dashboard?section=coupons" not in seen_urls:
                     actions.append(ChatAction(label="View Available Coupons", url="/dashboard?section=coupons", icon="tag"))
                     seen_urls.add("/dashboard?section=coupons")
 
-            if any(k in msg_lower for k in ["help", "support", "contact", "issue", "problem", "refund", "return"]):
+            if any(k in msg_lower for k in ["help", "support", "contact", "issue", "problem", "refund", "return"]) and not is_payment_step:
                 if "/dashboard?section=help" not in seen_urls:
                     actions.append(ChatAction(label="Help & Support", url="/dashboard?section=help", icon="help"))
                     seen_urls.add("/dashboard?section=help")

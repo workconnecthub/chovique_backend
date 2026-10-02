@@ -23,6 +23,9 @@ class WalletRepository:
 
         return wallet
 
+    async def get_by_user_id(self, user_id: str) -> UserWallet:
+        return await self.get_or_create_wallet(user_id)
+
     async def add_transaction(
         self,
         user_id: str,

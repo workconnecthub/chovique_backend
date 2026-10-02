@@ -174,7 +174,7 @@ def render_luxury_email(
           <tr>
             <td style="background-color: #060504; padding: 0; text-align: center; border-bottom: 2px solid #D4AF37; line-height: 0;">
               <a href="{base_url}" target="_blank" style="display: block; text-decoration: none; line-height: 0;">
-                <img src="https://images.unsplash.com/photo-1548907040-4d42b52115ca?auto=format&fit=crop&w=600&q=80" alt="Chovique Chocolatier" class="email-hero-img" style="width: 100%; max-width: 580px; height: auto; display: block; margin: 0 auto; border-top-left-radius: 13px; border-top-right-radius: 13px;" />
+                <img src="https://res.cloudinary.com/aiqm7f7b/image/upload/v1790955307/chocolate-world/branding/email-banner.jpg" alt="Chovique Chocolatier — Luxury Handcrafted Chocolates" class="email-hero-img" style="width: 100%; max-width: 580px; height: auto; display: block; margin: 0 auto; border-top-left-radius: 13px; border-top-right-radius: 13px;" />
               </a>
             </td>
           </tr>
