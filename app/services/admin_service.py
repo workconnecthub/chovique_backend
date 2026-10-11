@@ -2106,7 +2106,7 @@ class AdminService:
             # Auto-fetch direct video MP4 and account handle from Instagram
             try:
                 from app.services.instagram_service import fetch_instagram_reel_details
-                meta = fetch_instagram_reel_details(instagram_url, upload_to_cloudinary=True)
+                meta = fetch_instagram_reel_details(instagram_url)
                 if meta.get("video_url"):
                     video_url = meta["video_url"]
                 if meta.get("account_name") and (not payload.account_name or payload.account_name in {"@chovique_chocolatier", ""}):
@@ -2115,9 +2115,6 @@ class AdminService:
                     instagram_url = meta["instagram_url"]
             except Exception as e:
                 logger.warning("Could not auto-fetch Instagram reel details: %s", e)
-
-        if not video_url and not instagram_url:
-            video_url = "https://res.cloudinary.com/aiqm7f7b/video/upload/v1790396266/chocolate-world/reels/ig_DdQYj55v0dr.mp4"
 
         reel = await self.reel_repo.create(
             video_url=video_url or instagram_url or "",
@@ -2170,7 +2167,7 @@ class AdminService:
         elif instagram_url and "instagram.com" in instagram_url and (not video_url or not video_url.endswith(".mp4")):
             try:
                 from app.services.instagram_service import fetch_instagram_reel_details
-                meta = fetch_instagram_reel_details(instagram_url, upload_to_cloudinary=True)
+                meta = fetch_instagram_reel_details(instagram_url)
                 if meta.get("video_url"):
                     video_url = meta["video_url"]
                 if meta.get("account_name") and not account_name:

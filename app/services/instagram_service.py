@@ -1,19 +1,9 @@
 import re
 import urllib.request
-import io
 import logging
 from typing import Optional, Dict, Any
 
-from app.core.cloudinary import configure_cloudinary
-import cloudinary.uploader
-
 logger = logging.getLogger(__name__)
-
-# Configure Cloudinary on import
-try:
-    configure_cloudinary()
-except Exception as e:
-    logger.warning("Cloudinary configuration warning in instagram_service: %s", e)
 
 
 def extract_instagram_shortcode(url: str) -> Optional[str]:
@@ -26,94 +16,91 @@ def extract_instagram_shortcode(url: str) -> Optional[str]:
     """
     if not url:
         return None
-    match = re.search(r"/(?:reel|p|tv)/([a-zA-Z0-9_-]+)", url.strip())
+    clean = url.strip()
+    match = re.search(r"/(?:reel|p|tv)/([a-zA-Z0-9_-]+)", clean)
     if match:
         return match.group(1)
     return None
 
 
-def fetch_instagram_reel_details(url: str, upload_to_cloudinary: bool = True) -> Dict[str, Any]:
+def fetch_instagram_reel_details(url: str, upload_to_storage: bool = False) -> Dict[str, Any]:
     """
     Extracts the account handle and direct video MP4 URL from an Instagram Reel or Post.
-    Optionally uploads the MP4 directly to Cloudinary so it is permanent and streams fast.
+    Never throws unhandled exceptions — always returns a safe dictionary response.
     """
     shortcode = extract_instagram_shortcode(url)
     if not shortcode:
-        raise ValueError("Invalid Instagram URL. Expected format: https://www.instagram.com/reel/{code}/")
+        clean_url = (url or "").strip()
+        return {
+            "account_name": "@choviqueofficial",
+            "video_url": None,
+            "instagram_url": clean_url,
+            "shortcode": "",
+        }
 
     canonical_instagram_url = f"https://www.instagram.com/reel/{shortcode}/"
     embed_url = f"https://www.instagram.com/reel/{shortcode}/embed/captioned/"
 
-    # Instagram serves the complete embed page (with video source & author) to crawler user agents
     headers = {
         "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
     }
 
+    html = ""
     try:
         req = urllib.request.Request(embed_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             html = resp.read().decode("utf-8", errors="ignore")
     except Exception as e:
-        logger.error("Failed to fetch Instagram embed page for shortcode %s: %s", shortcode, e)
-        # Fallback to defaults
-        return {
-            "account_name": "@chovique_chocolatier",
-            "video_url": None,
-            "instagram_url": canonical_instagram_url,
-            "shortcode": shortcode,
-        }
+        logger.warning("Could not fetch Instagram embed page for %s: %s", shortcode, e)
 
     # 1. Extract Account Name / Handle
-    user_match = re.search(r"instagram\.com/([a-zA-Z0-9._]+)/\?utm_source=ig_embed", html)
-    if user_match and user_match.group(1) and user_match.group(1).lower() not in {"reel", "p", "tv", "explore"}:
-        account_name = f"@{user_match.group(1)}"
-    else:
-        # Fallback search for any author link
-        author_match = re.search(r"class=[\"'][^\"']*UsernameText[^\"']*[\"'][^>]*>(.*?)<", html)
-        if author_match and author_match.group(1):
-            account_name = f"@{author_match.group(1).strip()}"
+    account_name = "@choviqueofficial"
+    if html:
+        user_match = re.search(r"instagram\.com/([a-zA-Z0-9._]+)/\?utm_source=ig_embed", html)
+        if user_match and user_match.group(1) and user_match.group(1).lower() not in {"reel", "p", "tv", "explore", "rsrc.php"}:
+            account_name = f"@{user_match.group(1)}"
         else:
-            account_name = "@chovique_chocolatier"
+            author_match = re.search(r"class=[\"'][^\"']*UsernameText[^\"']*[\"'][^>]*>(.*?)<", html)
+            if author_match and author_match.group(1):
+                account_name = f"@{author_match.group(1).strip()}"
 
-    # 2. Extract Direct MP4 Video URL
+    # 2. Extract Direct MP4 Video URL if exposed
     direct_mp4 = None
-    mp4_match = re.search(r'(https:[^"\']+\.mp4[^"\'\\]*)', html)
-    if mp4_match:
-        raw_mp4 = mp4_match.group(1)
-        try:
-            clean_mp4 = raw_mp4.encode("utf-8").decode("unicode_escape")
-        except Exception:
-            clean_mp4 = raw_mp4
-        clean_mp4 = clean_mp4.replace(r"\/", "/").replace("\\", "").replace(r"\u0026", "&")
-        if clean_mp4.startswith("http"):
-            direct_mp4 = clean_mp4
+    if html:
+        mp4_match = re.search(r'(https:[^"\']+\.mp4[^"\'\\]*)', html)
+        if mp4_match:
+            raw_mp4 = mp4_match.group(1)
+            try:
+                clean_mp4 = raw_mp4.encode("utf-8").decode("unicode_escape")
+            except Exception:
+                clean_mp4 = raw_mp4
+            clean_mp4 = clean_mp4.replace(r"\/", "/").replace("\\", "").replace(r"\u0026", "&")
+            if clean_mp4.startswith("http"):
+                direct_mp4 = clean_mp4
 
     final_video_url = direct_mp4
 
-    # 3. Permanently host on Cloudinary if requested and available
-    if direct_mp4 and upload_to_cloudinary:
+    # 3. Optionally upload to S3/Tigris storage if requested and available
+    if direct_mp4 and upload_to_storage:
         try:
-            logger.info("Downloading reel video (%s) for permanent Cloudinary hosting...", shortcode)
-            v_req = urllib.request.Request(direct_mp4, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            with urllib.request.urlopen(v_req, timeout=20) as v_resp:
+            from app.services.storage_service import storage_service
+            logger.info("Downloading reel video (%s) for permanent storage hosting...", shortcode)
+            v_req = urllib.request.Request(direct_mp4, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(v_req, timeout=15) as v_resp:
                 video_bytes = v_resp.read()
 
             if video_bytes and len(video_bytes) > 1000:
-                upload_res = cloudinary.uploader.upload(
-                    io.BytesIO(video_bytes),
-                    folder="chocolate-world/reels",
-                    public_id=f"ig_{shortcode}",
-                    resource_type="video",
-                    overwrite=True,
+                s3_key = f"chocolate-world/reels/{shortcode}.mp4"
+                final_video_url = storage_service._upload_bytes(
+                    data=video_bytes,
+                    key=s3_key,
+                    content_type="video/mp4",
                 )
-                cloudinary_url = upload_res.get("secure_url") or upload_res.get("url")
-                if cloudinary_url:
-                    final_video_url = cloudinary_url
-                    logger.info("Reel %s successfully hosted on Cloudinary: %s", shortcode, final_video_url)
+                logger.info("Reel %s successfully hosted: %s", shortcode, final_video_url)
         except Exception as e:
-            logger.warning("Cloudinary upload failed for reel %s, using direct MP4: %s", shortcode, e)
+            logger.warning("Permanent storage upload skipped for reel %s: %s", shortcode, e)
             final_video_url = direct_mp4
 
     return {

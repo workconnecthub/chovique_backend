@@ -2282,11 +2282,13 @@ async def fetch_reel_meta(
     payload: FetchReelMetaPayload,
     current_user: User = Depends(require_role("admin", "superadmin")),
 ):
+    import asyncio
     from app.services.instagram_service import fetch_instagram_reel_details
     try:
-        data = fetch_instagram_reel_details(payload.url, upload_to_cloudinary=True)
+        data = await asyncio.to_thread(fetch_instagram_reel_details, payload.url)
         return data
     except Exception as e:
+        logger.warning("fetch_reel_meta warning: %s", e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e) or "Failed to fetch details from Instagram Reel URL",
