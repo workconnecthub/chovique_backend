@@ -2,7 +2,7 @@ import io
 import csv
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, func, or_, and_
+from sqlalchemy import select, func, or_, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
@@ -266,3 +266,26 @@ class SuperadminAuditLogsService:
             ])
 
         return output.getvalue()
+
+    async def delete_audit_log(self, log_id: str) -> bool:
+        """Delete a single audit log entry by ID."""
+        stmt = select(AuditLog).where(AuditLog.id == log_id)
+        res = await self.db.execute(stmt)
+        log = res.scalars().first()
+        if not log:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Audit log entry not found.",
+            )
+        await self.db.delete(log)
+        await self.db.commit()
+        return True
+
+    async def bulk_delete_audit_logs(self, log_ids: List[str]) -> int:
+        """Delete multiple audit log entries by their IDs."""
+        if not log_ids:
+            return 0
+        del_stmt = delete(AuditLog).where(AuditLog.id.in_(log_ids))
+        result = await self.db.execute(del_stmt)
+        await self.db.commit()
+        return result.rowcount or 0

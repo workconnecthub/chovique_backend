@@ -69,6 +69,22 @@ async def delete_category(
     db: AsyncSession = Depends(get_db),
 ):
     service = CategoryService(db)
-    deleted = await service.delete_category(category_id)
-    if not deleted:
+    try:
+        deleted = await service.delete_category(category_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found.")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get("/{category_id}/product-summary", summary="Get category product summary (admin only)")
+async def get_category_product_summary(
+    category_id: str,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = CategoryService(db)
+    summary = await service.get_category_product_summary(category_id)
+    if not summary:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found.")
+    return summary

@@ -4,7 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_role
 from app.models.user import User
-from app.schemas.superadmin_audit_logs import AuditLogResponse, AuditLogListResponse
+from app.schemas.superadmin_audit_logs import (
+    AuditLogResponse,
+    AuditLogListResponse,
+    BulkDeleteAuditLogsRequest,
+    BulkDeleteAuditLogsResponse,
+)
 from app.services.superadmin_audit_logs_service import SuperadminAuditLogsService
 
 router = APIRouter(prefix="/superadmin/audit-logs", tags=["Super Admin Audit Logs"])
@@ -100,3 +105,44 @@ async def get_audit_log_by_id(
     """
     service = SuperadminAuditLogsService(db)
     return await service.get_audit_log_by_id(log_id)
+
+
+@router.delete(
+    "/{log_id}",
+    summary="Delete Audit Log Entry",
+)
+async def delete_audit_log(
+    log_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("superadmin")),
+):
+    """
+    Delete a single audit log entry by ID.
+    Strictly requires 'superadmin' role authorization.
+    """
+    service = SuperadminAuditLogsService(db)
+    await service.delete_audit_log(log_id)
+    return {"success": True, "message": "Audit log deleted successfully"}
+
+
+@router.post(
+    "/bulk-delete",
+    response_model=BulkDeleteAuditLogsResponse,
+    summary="Bulk Delete Audit Log Entries",
+)
+async def bulk_delete_audit_logs(
+    payload: BulkDeleteAuditLogsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("superadmin")),
+):
+    """
+    Delete multiple audit log entries by their IDs.
+    Strictly requires 'superadmin' role authorization.
+    """
+    service = SuperadminAuditLogsService(db)
+    deleted_count = await service.bulk_delete_audit_logs(payload.log_ids)
+    return BulkDeleteAuditLogsResponse(
+        success=True,
+        deleted_count=deleted_count,
+        message=f"Successfully deleted {deleted_count} audit log entry/entries."
+    )

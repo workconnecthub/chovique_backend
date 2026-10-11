@@ -19,6 +19,25 @@ class ThemePreset(Base):
     text_color = Column(String(20), nullable=False, default="#F7F7F7")
     surface_color = Column(String(20), nullable=False, default="#1A1716")
 
+    # Granular Component Colors
+    button_color = Column(String(20), nullable=False, default="#5A3825")
+    button_text_color = Column(String(20), nullable=False, default="#FFFFFF")
+    secondary_button_color = Column(String(20), nullable=False, default="#D4AF37")
+    cart_color = Column(String(20), nullable=False, default="#D4AF37")
+    cart_text_color = Column(String(20), nullable=False, default="#0D090A")
+    product_card_color = Column(String(20), nullable=False, default="#1A1716")
+    product_card_border_color = Column(String(20), nullable=False, default="#D4AF37")
+    product_card_text_color = Column(String(20), nullable=False, default="#F7F7F7")
+    navbar_color = Column(String(20), nullable=False, default="#0D090A")
+    navbar_text_color = Column(String(20), nullable=False, default="#F7F7F7")
+    footer_color = Column(String(20), nullable=False, default="#0A0A0A")
+    footer_text_color = Column(String(20), nullable=False, default="#F7F7F7")
+
+    # Typography & Number Fonts
+    font_family = Column(String(100), nullable=False, default="Outfit")
+    heading_font_family = Column(String(100), nullable=False, default="Playfair Display")
+    number_font_family = Column(String(100), nullable=False, default="Outfit")
+
     # Legacy properties string (for backward compatibility)
     properties_json = Column(Text, nullable=True)
 

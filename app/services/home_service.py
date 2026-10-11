@@ -197,8 +197,19 @@ class HomeService:
     # Get Theme
     # ==========================================================
 
-    async def get_theme(self) -> dict | list | str | None:
-        return await self.config_repo.get("theme")
+    async def get_theme(self) -> dict | None:
+        try:
+            from app.services.superadmin_theme_service import SuperadminThemeService
+            service = SuperadminThemeService(self.db)
+            active_theme = await service.get_active_theme()
+            if hasattr(active_theme, "model_dump"):
+                return active_theme.model_dump()
+            elif hasattr(active_theme, "dict"):
+                return active_theme.dict()
+            return dict(active_theme)
+        except Exception:
+            cfg = await self.config_repo.get("theme")
+            return cfg if isinstance(cfg, dict) else None
 
     # ==========================================================
     # Get Stats

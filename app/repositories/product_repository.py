@@ -350,15 +350,86 @@ class ProductRepository:
         return res.rowcount > 0
 
     # ==========================================================
+    # Order Dependency & Summary
+    # ==========================================================
+
+    async def get_product_order_summary(self, product_id: str) -> dict:
+        from app.models.order import Order, OrderItem
+
+        active_statuses = [
+            "Pending", "PENDING",
+            "Confirmed", "CONFIRMED",
+            "Processing", "PROCESSING",
+            "Shipped", "SHIPPED",
+            "Out for Delivery", "OUT_FOR_DELIVERY", "Out_For_Delivery",
+        ]
+
+        stmt = (
+            select(Order.id, Order.status, func.coalesce(OrderItem.quantity, 1))
+            .join(OrderItem, OrderItem.order_id == Order.id)
+            .where(OrderItem.product_id == product_id)
+        )
+        result = await self.db.execute(stmt)
+        rows = result.all()
+
+        total_orders = len(rows)
+        active_order_ids: list[str] = []
+        completed_orders = 0
+
+        for order_id, order_status, _qty in rows:
+            st = (order_status or "").strip()
+            if any(st.lower() == act.lower() for act in active_statuses):
+                active_order_ids.append(order_id)
+            else:
+                completed_orders += 1
+
+        active_orders = len(active_order_ids)
+        can_delete = (active_orders == 0)
+
+        existing = await self.get_by_id(product_id)
+        prod_name = existing.name if existing else "Product"
+
+        return {
+            "product_id": product_id,
+            "product_name": prod_name,
+            "total_orders": total_orders,
+            "active_orders": active_orders,
+            "completed_orders": completed_orders,
+            "can_delete": can_delete,
+            "active_order_ids": active_order_ids,
+        }
+
+    # ==========================================================
     # Delete
     # ==========================================================
 
     async def delete(self, product_id: str) -> None:
         from app.models.cart import CartItem
         from app.models.wishlist import WishlistItem
+        from app.models.review import ProductReview
+        from app.models.coupon import CouponProduct
+        from app.models.order import OrderItem
 
+        existing = await self.get_by_id(product_id)
+        prod_name = existing.name if existing else "Archived Product"
+
+        # 1. Preserve historical order items by storing product_name snapshot and decoupling product_id
+        await self.db.execute(
+            update(OrderItem)
+            .where(OrderItem.product_id == product_id)
+            .values(
+                product_name=func.coalesce(OrderItem.product_name, prod_name),
+                product_id=None
+            )
+        )
+
+        # 2. Clean up child records in cart, wishlist, reviews, coupons
         await self.db.execute(delete(CartItem).where(CartItem.product_id == product_id))
         await self.db.execute(delete(WishlistItem).where(WishlistItem.product_id == product_id))
+        await self.db.execute(delete(ProductReview).where(ProductReview.product_id == product_id))
+        await self.db.execute(delete(CouponProduct).where(CouponProduct.product_id == product_id))
+
+        # 3. Delete product permanently
         await self.db.execute(delete(Product).where(Product.id == product_id))
         await self.db.commit()
 

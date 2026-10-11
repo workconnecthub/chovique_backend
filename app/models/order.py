@@ -89,7 +89,8 @@ class OrderItem(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     order_id = Column(String(36), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
-    product_id = Column(String(36), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True)
+    product_id = Column(String(36), ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    product_name = Column(String(255), nullable=True)
     quantity = Column(Integer, default=1, nullable=False)
     price = Column(Float, nullable=False)
 

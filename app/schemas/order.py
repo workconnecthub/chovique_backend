@@ -45,7 +45,8 @@ class CartItemResponse(BaseModel):
 
 
 class OrderItemResponse(BaseModel):
-    product: ProductResponse
+    product: Optional[ProductResponse] = None
+    product_name: Optional[str] = None
     quantity: int
     price: float
     

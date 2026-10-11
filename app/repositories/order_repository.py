@@ -139,6 +139,7 @@ class OrderRepository:
                 product_id=item_info["product_id"],
                 quantity=item_info["quantity"],
                 price=item_info["price"],
+                product_name=item_info.get("product_name") or item_info.get("name"),
             )
             self.db.add(item)
 

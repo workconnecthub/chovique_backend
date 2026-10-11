@@ -88,7 +88,8 @@ async def submit_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     service = CustomerService(db)
-    ticket = await service.submit_ticket_feedback(ticket_id, current_user.id, payload)
+    feedback_str = payload.feedback if hasattr(payload, "feedback") else str(payload)
+    ticket = await service.submit_ticket_feedback(ticket_id, current_user.id, feedback_str)
     if not ticket:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found.")
     return ticket

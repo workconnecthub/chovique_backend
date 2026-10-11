@@ -97,11 +97,21 @@ class CategoryService:
         return CategoryResponse.model_validate(category)
 
     async def delete_category(self, category_id: str) -> bool:
-        from sqlalchemy import select, func
-        from app.models.product import Product
-        count_res = await self.db.execute(
-            select(func.count(Product.id)).where(Product.category_id == category_id)
-        )
-        if (count_res.scalar() or 0) > 0:
-            raise ValueError("Cannot delete category: products are currently assigned to this category.")
+        summary = await self.category_repo.get_category_product_summary(category_id)
+        if not summary:
+            return False
+
+        if summary["product_count"] > 0:
+            prod_names = ", ".join([p["name"] for p in summary["products"][:3]])
+            if summary["product_count"] > 3:
+                prod_names += f" and {summary['product_count'] - 3} more"
+            raise ValueError(
+                f"Cannot delete category '{summary['category_name']}'. "
+                f"There are {summary['product_count']} product(s) currently assigned to this category ({prod_names}). "
+                f"If you want to delete this category, first you must remove or reassign the products which are existing based on this category."
+            )
+
         return await self.category_repo.delete(category_id)
+
+    async def get_category_product_summary(self, category_id: str) -> dict | None:
+        return await self.category_repo.get_category_product_summary(category_id)

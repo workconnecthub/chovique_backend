@@ -52,7 +52,13 @@ from app.services.pdf_report_service import PdfReportService
 from app.services.csv_report_service import CsvReportService
 from app.schemas.category import AdminCategoryResponse, CategoryUpdate
 from app.services.admin_service import AdminService
-from app.schemas.wallet import RewardSettingsSchema, CoinTransactionResponse, AdminCustomerRewardStat, AdminCoinTransactionItem
+from app.schemas.wallet import (
+    RewardSettingsSchema,
+    CoinTransactionResponse,
+    AdminCustomerRewardStat,
+    AdminCoinTransactionItem,
+    DeleteCustomerRewardsPayload,
+)
 from app.services.wallet_service import WalletService
 from app.models.audit_log import AuditLog
 from app.schemas.admin_profile import AdminProfileResponse, AdminProfileUpdateRequest
@@ -375,6 +381,32 @@ async def get_admin_customer_rewards(
         )
 
     return results
+
+
+@router.delete("/rewards/customers", summary="Bulk delete / reset selected customer reward records")
+async def delete_admin_customer_rewards(
+    payload: DeleteCustomerRewardsPayload,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.models.wallet import Wallet, CoinTransaction
+    from sqlalchemy import delete, update
+
+    if not payload.user_ids:
+        return {"deleted_count": 0, "message": "No customer IDs provided"}
+
+    # Delete all coin transactions for the selected customer accounts
+    await db.execute(
+        delete(CoinTransaction).where(CoinTransaction.user_id.in_(payload.user_ids))
+    )
+    # Reset wallet balance to 0 for the selected customer accounts
+    await db.execute(
+        update(Wallet)
+        .where(Wallet.user_id.in_(payload.user_ids))
+        .values(coin_balance=0)
+    )
+    await db.commit()
+    return {"deleted_count": len(payload.user_ids), "message": "Customer rewards successfully reset/deleted"}
 
 
 @router.get("/rewards/transactions", response_model=List[AdminCoinTransactionItem], summary="Get all coin transactions")
@@ -2587,9 +2619,28 @@ async def admin_delete_category(
     db: AsyncSession = Depends(get_db),
 ):
     service = AdminService(db)
-    deleted = await service.admin_delete_category(category_id)
-    if not deleted:
+    try:
+        deleted = await service.admin_delete_category(category_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found.")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get(
+    "/categories/{category_id}/product-summary",
+    summary="Get product assignment summary for category (admin only)",
+)
+async def admin_get_category_product_summary(
+    category_id: str,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    summary = await service.get_category_product_summary(category_id)
+    if not summary:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found.")
+    return summary
 
 
 @router.post(

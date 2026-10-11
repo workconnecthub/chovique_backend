@@ -368,12 +368,14 @@ class WalletService:
             try:
                 from app.repositories.notification_repository import NotificationRepository
                 notif_repo = NotificationRepository(self.db)
+                delay_hours = getattr(settings, "credit_delay_hours", 24) or 24
+                avail_msg = "(Immediately available in your wallet)" if delay_hours <= 0 else f"(Available after {delay_hours} hour{'s' if delay_hours > 1 else ''})"
                 await notif_repo.create(
                     user_id=user_id,
                     type="reward",
                     title="Reward Coins Earned",
-                    message=f"You earned {total_coins} Reward Coins from your order. (Available after 24 hours)",
-                    text=f"You earned {total_coins} Reward Coins from your order. (Available after 24 hours)",
+                    message=f"You earned {total_coins} Reward Coins from your order. {avail_msg}",
+                    text=f"You earned {total_coins} Reward Coins from your order. {avail_msg}",
                     related_entity_type="wallet",
                     related_entity_id=order_id,
                     reference_id=order_id,

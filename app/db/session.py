@@ -96,9 +96,11 @@ async def init_db() -> None:
             "ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_discount DOUBLE PRECISION NOT NULL DEFAULT 0.0;",
             "ALTER TABLE orders ADD COLUMN IF NOT EXISTS coins_used INTEGER NOT NULL DEFAULT 0;",
             "ALTER TABLE orders ADD COLUMN IF NOT EXISTS coin_discount DOUBLE PRECISION NOT NULL DEFAULT 0.0;",
-            "ALTER TABLE orders ADD COLUMN IF NOT EXISTS coins_earned INTEGER NOT NULL DEFAULT 0;",
             "ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_option VARCHAR(100) NOT NULL DEFAULT 'Standard Delivery';",
             "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method VARCHAR(100) NOT NULL DEFAULT 'UPI';",
+            # Order Items
+            "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS product_name VARCHAR(255);",
+            "ALTER TABLE order_items ALTER COLUMN product_id DROP NOT NULL;",
             # Product Reviews
             "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'approved';",
             "ALTER TABLE product_reviews ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;",
@@ -168,6 +170,22 @@ async def init_db() -> None:
             "ALTER TABLE instagram_reels ALTER COLUMN likes DROP NOT NULL;",
             "ALTER TABLE instagram_reels ALTER COLUMN comments DROP NOT NULL;",
             "ALTER TABLE instagram_reels ALTER COLUMN views DROP NOT NULL;",
+            # Theme Presets Enhancements
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS button_color VARCHAR(20) NOT NULL DEFAULT '#5A3825';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS button_text_color VARCHAR(20) NOT NULL DEFAULT '#FFFFFF';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS secondary_button_color VARCHAR(20) NOT NULL DEFAULT '#D4AF37';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS cart_color VARCHAR(20) NOT NULL DEFAULT '#D4AF37';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS cart_text_color VARCHAR(20) NOT NULL DEFAULT '#0D090A';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS product_card_color VARCHAR(20) NOT NULL DEFAULT '#1A1716';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS product_card_border_color VARCHAR(20) NOT NULL DEFAULT '#D4AF37';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS product_card_text_color VARCHAR(20) NOT NULL DEFAULT '#F7F7F7';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS navbar_color VARCHAR(20) NOT NULL DEFAULT '#0D090A';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS navbar_text_color VARCHAR(20) NOT NULL DEFAULT '#F7F7F7';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS footer_color VARCHAR(20) NOT NULL DEFAULT '#0A0A0A';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS footer_text_color VARCHAR(20) NOT NULL DEFAULT '#F7F7F7';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS font_family VARCHAR(100) NOT NULL DEFAULT 'Outfit';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS heading_font_family VARCHAR(100) NOT NULL DEFAULT 'Playfair Display';",
+            "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS number_font_family VARCHAR(100) NOT NULL DEFAULT 'Outfit';",
         ]
         for stmt in alter_statements:
             try:

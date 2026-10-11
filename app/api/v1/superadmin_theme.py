@@ -28,6 +28,18 @@ async def get_all_themes(
 
 
 @router.get(
+    "/active",
+    response_model=ThemeResponse,
+    summary="Get currently active theme configuration",
+)
+async def get_active_theme(
+    db: AsyncSession = Depends(get_db),
+):
+    service = SuperadminThemeService(db)
+    return await service.get_active_theme()
+
+
+@router.get(
     "/{theme_id}",
     response_model=ThemeResponse,
     summary="Get theme configuration by ID",

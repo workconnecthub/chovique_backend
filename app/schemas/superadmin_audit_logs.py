@@ -30,3 +30,15 @@ class AuditLogListResponse(BaseModel):
     total: int = 0
     page: int = 1
     limit: int = 10
+
+
+class BulkDeleteAuditLogsRequest(BaseModel):
+    """Request schema for deleting multiple audit log entries."""
+    log_ids: List[str] = Field(..., min_length=1, description="List of audit log UUIDs to delete")
+
+
+class BulkDeleteAuditLogsResponse(BaseModel):
+    """Response schema for bulk delete operation."""
+    success: bool = True
+    deleted_count: int = 0
+    message: str = "Audit logs deleted successfully"

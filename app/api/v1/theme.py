@@ -5,7 +5,9 @@ from app.db.session import get_db
 from app.models.user import User
 from app.api.deps import require_role
 from app.schemas.theme import ThemePresetPayload, ThemePresetResponse
+from app.schemas.superadmin_theme import ThemeResponse
 from app.services.theme_service import ThemeService
+from app.services.superadmin_theme_service import SuperadminThemeService
 
 router = APIRouter()
 
@@ -22,13 +24,13 @@ async def get_all_themes(
 
 @router.get(
     "/active",
-    response_model=ThemePresetResponse | None,
+    response_model=ThemeResponse,
     summary="Get active theme preset"
 )
 async def get_active_theme(
     db: AsyncSession = Depends(get_db)
 ):
-    service = ThemeService(db)
+    service = SuperadminThemeService(db)
     return await service.get_active_theme()
 
 @router.post(

@@ -35,8 +35,14 @@ class RewardSettingsSchema(BaseModel):
     max_redemption_percentage: float = 20.0  # Max 20% of subtotal can be paid with coins
     welcome_coins: int = 200          # Account creation reward = 200 coins
     first_order_coins: int = 200     # First order bonus = 200 coins
-    credit_delay_hours: int = 24      # 24-hour waiting period for order coins
+    credit_delay_hours: float = 24.0   # Waiting period for order coins (supports float e.g. 1.5, 0.5)
+    credit_delay_days: Optional[int] = 0
+    credit_delay_minutes: Optional[int] = 0
     per_order_coins_fixed: int = 0    # Fixed coins given per order (if 0, relies on spend_per_coin)
+
+
+class DeleteCustomerRewardsPayload(BaseModel):
+    user_ids: List[str]
 
 
 class UserWalletResponse(BaseModel):

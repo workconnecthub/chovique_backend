@@ -150,8 +150,26 @@ class AdminService:
         return await self.category_repo.update(category_id, **kwargs)
 
     async def admin_delete_category(self, category_id: str) -> bool:
-        """Delete a category by ID."""
+        """Delete a category by ID if no products are assigned to it."""
+        summary = await self.category_repo.get_category_product_summary(category_id)
+        if not summary:
+            return False
+
+        if summary["product_count"] > 0:
+            prod_names = ", ".join([p["name"] for p in summary["products"][:3]])
+            if summary["product_count"] > 3:
+                prod_names += f" and {summary['product_count'] - 3} more"
+            raise ValueError(
+                f"Cannot delete category '{summary['category_name']}'. "
+                f"There are {summary['product_count']} product(s) currently assigned to this category ({prod_names}). "
+                f"If you want to delete this category, first you must remove or reassign the products which are existing based on this category."
+            )
+
         return await self.category_repo.delete(category_id)
+
+    async def get_category_product_summary(self, category_id: str) -> dict | None:
+        """Get product assignment summary for category."""
+        return await self.category_repo.get_category_product_summary(category_id)
 
     async def admin_upload_category_image(self, category_id: str, image_file: UploadFile) -> str:
         """Upload a new image for a category and update the record."""
@@ -450,8 +468,8 @@ class AdminService:
             if exp_dt <= now_utc:
                 status_str = "EXPIRED"
 
-        exp_str = c.expires_at.strftime("%Y-%m-%d") if c.expires_at else None
-        start_str = c.start_at.strftime("%Y-%m-%d") if c.start_at else None
+        exp_str = c.expires_at.isoformat() if c.expires_at else None
+        start_str = c.start_at.isoformat() if c.start_at else None
 
         return CouponAdminResponse(
             id=c.id,

@@ -774,14 +774,22 @@ class CustomerService:
                         price=float(getattr(item.product, "price", item.price or 0.0) or 0.0),
                     )
             else:
+                fallback_name = getattr(item, "product_name", None) or "Archived Product"
                 product_res = ProductResponse(
-                    id=str(item.product_id or "unknown"),
-                    name="Chovique Product",
+                    id=str(item.product_id or "archived"),
+                    name=fallback_name,
                     slug="product",
                     category="Chocolates",
                     price=float(item.price or 0.0),
                 )
-            cart_items.append(OrderItemResponse(product=product_res, quantity=item.quantity or 1, price=float(item.price or 0.0)))
+            cart_items.append(
+                OrderItemResponse(
+                    product=product_res,
+                    product_name=getattr(item, "product_name", None) or (product_res.name if product_res else None),
+                    quantity=item.quantity or 1,
+                    price=float(item.price or 0.0),
+                )
+            )
 
         ship_addr_raw = getattr(order, "shipping_address", None) or {}
         if not isinstance(ship_addr_raw, dict):
@@ -1058,7 +1066,9 @@ class CustomerService:
         if ticket.status != "Resolved":
             raise ValueError("Feedback can only be provided for resolved support tickets.")
 
-        ticket.customer_resolution_feedback = feedback
+        if hasattr(feedback, "feedback"):
+            feedback = feedback.feedback
+        ticket.customer_resolution_feedback = str(feedback)
         await self.db.commit()
         await self.db.refresh(ticket)
         return self._format_ticket_response(ticket)

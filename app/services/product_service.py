@@ -174,6 +174,16 @@ class ProductService:
         return ProductResponse.from_orm_model(product)
 
     # ==========================================================
+    # Product Order Summary (Deletion Safety Check)
+    # ==========================================================
+
+    async def get_order_summary(self, product_id: str) -> dict | None:
+        existing = await self.product_repo.get_by_id(product_id)
+        if not existing:
+            return None
+        return await self.product_repo.get_product_order_summary(product_id)
+
+    # ==========================================================
     # Delete Product
     # ==========================================================
 
@@ -183,6 +193,15 @@ class ProductService:
 
         if not existing:
             return False
+
+        # Guardrail: Check active orders in-process
+        order_summary = await self.product_repo.get_product_order_summary(product_id)
+        if not order_summary["can_delete"]:
+            active_ids_preview = ", ".join(order_summary["active_order_ids"][:3])
+            more_text = f" and {len(order_summary['active_order_ids']) - 3} more" if len(order_summary["active_order_ids"]) > 3 else ""
+            raise ValueError(
+                f"Cannot delete product '{existing.name}'. There are {order_summary['active_orders']} active order(s) currently being processed ({active_ids_preview}{more_text}). These orders must be completed or resolved before the product can be deleted."
+            )
 
         # Delete all associated S3 images before removing from DB
         from app.services.storage_service import storage_service

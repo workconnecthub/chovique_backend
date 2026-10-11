@@ -388,6 +388,29 @@ async def update_product_image(
     return updated_product
 
 # ======================================================
+# PRODUCT ORDER SUMMARY & DELETION SAFETY CHECK
+# ======================================================
+
+@router.get(
+    "/{product_id}/order-summary",
+    summary="Get order status summary for product deletion checks (admin/superadmin only)",
+)
+async def get_product_order_summary(
+    product_id: str,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = ProductService(db)
+    summary = await service.get_order_summary(product_id)
+    if not summary:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found.",
+        )
+    return summary
+
+
+# ======================================================
 # DELETE PRODUCT (Admin only)
 # ======================================================
 
@@ -402,12 +425,17 @@ async def delete_product(
     db: AsyncSession = Depends(get_db),
 ):
     service = ProductService(db)
-    deleted = await service.delete_product(product_id)
-
-    if not deleted:
+    try:
+        deleted = await service.delete_product(product_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not found.",
+            )
+    except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
         )
 
 

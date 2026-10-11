@@ -64,8 +64,8 @@ class CouponRepository:
             except Exception:
                 pass
 
-            # 5. Common formats
-            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d"):
+            # 5. Common formats (supports days, hours, and minutes)
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d"):
                 try:
                     dt = datetime.datetime.strptime(val_str, fmt)
                     if is_end_of_day and fmt in ("%Y/%m/%d",):
