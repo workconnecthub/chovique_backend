@@ -2301,7 +2301,7 @@ async def fetch_reel_meta(
     summary="Create a new Instagram reel entry (admin only)",
 )
 async def create_reel(
-    title: Optional[str] = Form(default="Instagram Reel"),
+    title: Optional[str] = Form(default=None),
     likes: str = Form(default="0"),
     comments: str = Form(default="0"),
     views: str = Form(default="0 views"),
@@ -2309,24 +2309,32 @@ async def create_reel(
     is_active: bool = Form(default=True),
     video_url: Optional[str] = Form(default=None),
     instagram_url: Optional[str] = Form(default=None),
-    account_name: Optional[str] = Form(default="@chovique_chocolatier"),
+    account_name: Optional[str] = Form(default=None),
     video: Optional[UploadFile] = File(default=None),
     current_user: User = Depends(require_role("admin", "superadmin")),
     db: AsyncSession = Depends(get_db),
 ):
+    clean_account = (account_name or "").strip()
     payload = CreateReelRequest(
         video_url=video_url,
         instagram_url=instagram_url,
-        account_name=account_name,
+        account_name=clean_account,
         likes=likes,
         comments=comments,
         views=views,
-        title=title or account_name or "Instagram Reel",
+        title=title or clean_account or "Instagram Reel",
         sort_order=sort_order,
         is_active=is_active,
     )
     service = AdminService(db)
-    return await service.create_reel(payload, video_file=video)
+    try:
+        return await service.create_reel(payload, video_file=video)
+    except Exception as e:
+        logger.error("Failed to create Instagram reel: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e) or "Failed to publish reel. Please verify the URL or video file.",
+        )
 
 
 @router.delete(

@@ -2095,7 +2095,7 @@ class AdminService:
     ) -> ReelResponse:
         video_url = payload.video_url
         instagram_url = payload.instagram_url or payload.video_url
-        account_name = payload.account_name or "@chovique_chocolatier"
+        account_name = (payload.account_name or "").strip()
 
         if video_file and hasattr(video_file, "filename") and video_file.filename:
             video_url = await storage_service.upload_video(
@@ -2103,18 +2103,20 @@ class AdminService:
                 folder="chocolate-world/reels",
             )
         elif instagram_url and "instagram.com" in instagram_url:
-            # Auto-fetch direct video MP4 and account handle from Instagram
-            try:
-                from app.services.instagram_service import fetch_instagram_reel_details
-                meta = fetch_instagram_reel_details(instagram_url)
-                if meta.get("video_url"):
-                    video_url = meta["video_url"]
-                if meta.get("account_name") and (not payload.account_name or payload.account_name in {"@chovique_chocolatier", ""}):
-                    account_name = meta["account_name"]
-                if meta.get("instagram_url"):
-                    instagram_url = meta["instagram_url"]
-            except Exception as e:
-                logger.warning("Could not auto-fetch Instagram reel details: %s", e)
+            # If video_url is not already a permanent bucket URL (e.g. empty or temporary CDN URL)
+            if not video_url or "fbcdn" in video_url or "instagram" in video_url:
+                try:
+                    import asyncio
+                    from app.services.instagram_service import fetch_instagram_reel_details
+                    meta = await asyncio.to_thread(fetch_instagram_reel_details, instagram_url, upload_to_storage=True)
+                    if meta.get("video_url"):
+                        video_url = meta["video_url"]
+                    if meta.get("account_name") and not account_name:
+                        account_name = meta["account_name"]
+                    if meta.get("instagram_url"):
+                        instagram_url = meta["instagram_url"]
+                except Exception as e:
+                    logger.warning("Could not auto-fetch & host Instagram reel details: %s", e)
 
         reel = await self.reel_repo.create(
             video_url=video_url or instagram_url or "",
@@ -2131,7 +2133,7 @@ class AdminService:
             id=reel.id,
             videoUrl=reel.video_url,
             instagramUrl=reel.instagram_url,
-            accountName=reel.account_name,
+            accountName=reel.account_name or "",
             likes=reel.likes,
             comments=reel.comments,
             views=reel.views,
@@ -2164,10 +2166,11 @@ class AdminService:
                 file=video_file,
                 folder="chocolate-world/reels",
             )
-        elif instagram_url and "instagram.com" in instagram_url and (not video_url or not video_url.endswith(".mp4")):
+        elif instagram_url and "instagram.com" in instagram_url and (not video_url or "fbcdn" in (video_url or "") or "instagram" in (video_url or "")):
             try:
+                import asyncio
                 from app.services.instagram_service import fetch_instagram_reel_details
-                meta = fetch_instagram_reel_details(instagram_url)
+                meta = await asyncio.to_thread(fetch_instagram_reel_details, instagram_url, upload_to_storage=True)
                 if meta.get("video_url"):
                     video_url = meta["video_url"]
                 if meta.get("account_name") and not account_name:
@@ -2193,7 +2196,7 @@ class AdminService:
             id=updated.id,
             videoUrl=updated.video_url,
             instagramUrl=updated.instagram_url,
-            accountName=updated.account_name or "@chovique_chocolatier",
+            accountName=updated.account_name or "",
             likes=updated.likes,
             comments=updated.comments,
             views=updated.views,

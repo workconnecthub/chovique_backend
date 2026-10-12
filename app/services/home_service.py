@@ -260,18 +260,24 @@ class HomeService:
 
     async def get_reels(self):
         from app.repositories.reel_repository import ReelRepository
+        from app.core.config import settings
         repo = ReelRepository(self.db)
         reels = await repo.get_active_reels()
-        return [
-            {
+        backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
+
+        result = []
+        for r in reels:
+            vid = r.video_url or ""
+            if vid.startswith("/api/v1/media/") and backend_url:
+                vid = f"{backend_url}{vid}"
+            result.append({
                 "id": r.id,
-                "videoUrl": r.video_url,
+                "videoUrl": vid,
                 "instagramUrl": r.instagram_url,
-                "accountName": r.account_name or "@chovique_chocolatier",
+                "accountName": r.account_name or "",
                 "likes": r.likes,
                 "comments": r.comments,
                 "views": r.views,
                 "title": r.title,
-            }
-            for r in reels
-        ]
+            })
+        return result

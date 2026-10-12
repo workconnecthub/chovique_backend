@@ -163,13 +163,17 @@ async def init_db() -> None:
             # Cleanup removed Inventory module table
             "DROP TABLE IF EXISTS inventory_logs CASCADE;",
             # Instagram Reels enhancements
-            "ALTER TABLE instagram_reels ADD COLUMN IF NOT EXISTS instagram_url VARCHAR(500);",
-            "ALTER TABLE instagram_reels ADD COLUMN IF NOT EXISTS account_name VARCHAR(100) DEFAULT '@chovique_chocolatier';",
+            "ALTER TABLE instagram_reels ADD COLUMN IF NOT EXISTS instagram_url TEXT;",
+            "ALTER TABLE instagram_reels ALTER COLUMN instagram_url TYPE TEXT;",
+            "ALTER TABLE instagram_reels ADD COLUMN IF NOT EXISTS account_name VARCHAR(100) DEFAULT '';",
+            "ALTER TABLE instagram_reels ALTER COLUMN account_name SET DEFAULT '';",
+            "ALTER TABLE instagram_reels ALTER COLUMN video_url TYPE TEXT;",
             "ALTER TABLE instagram_reels ALTER COLUMN video_url DROP NOT NULL;",
             "ALTER TABLE instagram_reels ALTER COLUMN title DROP NOT NULL;",
             "ALTER TABLE instagram_reels ALTER COLUMN likes DROP NOT NULL;",
             "ALTER TABLE instagram_reels ALTER COLUMN comments DROP NOT NULL;",
             "ALTER TABLE instagram_reels ALTER COLUMN views DROP NOT NULL;",
+            "DELETE FROM instagram_reels WHERE account_name = '@testchovique' OR title = 'Test Reel';",
             # Theme Presets Enhancements
             "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS button_color VARCHAR(20) NOT NULL DEFAULT '#5A3825';",
             "ALTER TABLE theme_presets ADD COLUMN IF NOT EXISTS button_text_color VARCHAR(20) NOT NULL DEFAULT '#FFFFFF';",

@@ -23,16 +23,64 @@ def extract_instagram_shortcode(url: str) -> Optional[str]:
     return None
 
 
-def fetch_instagram_reel_details(url: str, upload_to_storage: bool = False) -> Dict[str, Any]:
+def download_reel_to_bucket(url: str, shortcode: str) -> Optional[str]:
     """
-    Extracts the account handle and direct video MP4 URL from an Instagram Reel or Post.
-    Never throws unhandled exceptions — always returns a safe dictionary response.
+    Downloads the Instagram reel video via yt-dlp and uploads it to the Tigris S3 bucket.
+    Returns the permanent public/proxy media URL.
+    """
+    import os
+    import tempfile
+    try:
+        import yt_dlp
+        from app.services.storage_service import storage_service
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_tmpl = os.path.join(tmpdir, f"{shortcode}.%(ext)s")
+            ydl_opts = {
+                "format": "best[ext=mp4]/best",
+                "outtmpl": out_tmpl,
+                "quiet": True,
+                "no_warnings": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                filename = ydl.prepare_filename(info)
+                if not os.path.exists(filename):
+                    files = [f for f in os.listdir(tmpdir) if os.path.isfile(os.path.join(tmpdir, f))]
+                    if files:
+                        filename = os.path.join(tmpdir, files[0])
+
+                if os.path.exists(filename) and os.path.getsize(filename) > 1000:
+                    with open(filename, "rb") as f:
+                        video_bytes = f.read()
+
+                    s3_key = f"chocolate-world/reels/{shortcode}.mp4"
+                    hosted_url = storage_service._upload_to_s3(
+                        data=video_bytes,
+                        key=s3_key,
+                        content_type="video/mp4",
+                    )
+                    logger.info("Successfully downloaded & hosted reel %s in bucket: %s", shortcode, hosted_url)
+                    return hosted_url
+    except Exception as e:
+        logger.warning("yt-dlp download/upload failed for reel %s: %s", shortcode, e)
+    return None
+
+
+def fetch_instagram_reel_details(url: str, upload_to_storage: bool = True) -> Dict[str, Any]:
+    """
+    Extracts the account handle and downloads the video directly to the storage bucket.
+    Returns a safe dictionary with permanent bucket video URL.
     """
     shortcode = extract_instagram_shortcode(url)
     if not shortcode:
         clean_url = (url or "").strip()
+        extracted = ""
+        url_match = re.search(r"instagram\.com/([a-zA-Z0-9._]+)/(?:reel|p|tv)/", clean_url, re.IGNORECASE)
+        if url_match and url_match.group(1).lower() not in {"reel", "p", "tv", "explore", "stories", "rsrc.php"}:
+            extracted = f"@{url_match.group(1)}"
         return {
-            "account_name": "@choviqueofficial",
+            "account_name": extracted,
             "video_url": None,
             "instagram_url": clean_url,
             "shortcode": "",
@@ -55,20 +103,28 @@ def fetch_instagram_reel_details(url: str, upload_to_storage: bool = False) -> D
     except Exception as e:
         logger.warning("Could not fetch Instagram embed page for %s: %s", shortcode, e)
 
-    # 1. Extract Account Name / Handle
-    account_name = "@choviqueofficial"
-    if html:
+    # 1. Extract Account Name / Handle (No hardcoded seeding)
+    account_name = ""
+    url_handle_match = re.search(r"instagram\.com/([a-zA-Z0-9._]+)/(?:reel|p|tv)/", url or "", re.IGNORECASE)
+    if url_handle_match and url_handle_match.group(1).lower() not in {"reel", "p", "tv", "explore", "stories", "rsrc.php"}:
+        account_name = f"@{url_handle_match.group(1)}"
+
+    if not account_name and html:
         user_match = re.search(r"instagram\.com/([a-zA-Z0-9._]+)/\?utm_source=ig_embed", html)
-        if user_match and user_match.group(1) and user_match.group(1).lower() not in {"reel", "p", "tv", "explore", "rsrc.php"}:
+        if user_match and user_match.group(1) and user_match.group(1).lower() not in {"reel", "p", "tv", "explore", "stories", "rsrc.php"}:
             account_name = f"@{user_match.group(1)}"
         else:
             author_match = re.search(r"class=[\"'][^\"']*UsernameText[^\"']*[\"'][^>]*>(.*?)<", html)
             if author_match and author_match.group(1):
                 account_name = f"@{author_match.group(1).strip()}"
 
-    # 2. Extract Direct MP4 Video URL if exposed
-    direct_mp4 = None
-    if html:
+    # 2. Download and Host Reel Video in Bucket
+    final_video_url = None
+    if upload_to_storage:
+        final_video_url = download_reel_to_bucket(canonical_instagram_url, shortcode)
+
+    # 3. Fallback extraction of direct MP4 if bucket download was skipped or failed
+    if not final_video_url and html:
         mp4_match = re.search(r'(https:[^"\']+\.mp4[^"\'\\]*)', html)
         if mp4_match:
             raw_mp4 = mp4_match.group(1)
@@ -78,30 +134,23 @@ def fetch_instagram_reel_details(url: str, upload_to_storage: bool = False) -> D
                 clean_mp4 = raw_mp4
             clean_mp4 = clean_mp4.replace(r"\/", "/").replace("\\", "").replace(r"\u0026", "&")
             if clean_mp4.startswith("http"):
-                direct_mp4 = clean_mp4
-
-    final_video_url = direct_mp4
-
-    # 3. Optionally upload to S3/Tigris storage if requested and available
-    if direct_mp4 and upload_to_storage:
-        try:
-            from app.services.storage_service import storage_service
-            logger.info("Downloading reel video (%s) for permanent storage hosting...", shortcode)
-            v_req = urllib.request.Request(direct_mp4, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(v_req, timeout=15) as v_resp:
-                video_bytes = v_resp.read()
-
-            if video_bytes and len(video_bytes) > 1000:
-                s3_key = f"chocolate-world/reels/{shortcode}.mp4"
-                final_video_url = storage_service._upload_bytes(
-                    data=video_bytes,
-                    key=s3_key,
-                    content_type="video/mp4",
-                )
-                logger.info("Reel %s successfully hosted: %s", shortcode, final_video_url)
-        except Exception as e:
-            logger.warning("Permanent storage upload skipped for reel %s: %s", shortcode, e)
-            final_video_url = direct_mp4
+                if upload_to_storage:
+                    try:
+                        from app.services.storage_service import storage_service
+                        req = urllib.request.Request(clean_mp4, headers={"User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(req, timeout=15) as resp:
+                            video_bytes = resp.read()
+                        if len(video_bytes) > 1000:
+                            s3_key = f"chocolate-world/reels/{shortcode}.mp4"
+                            final_video_url = storage_service._upload_to_s3(
+                                data=video_bytes,
+                                key=s3_key,
+                                content_type="video/mp4",
+                            )
+                    except Exception as e:
+                        logger.warning("Failed to download fallback mp4 to bucket: %s", e)
+                if not final_video_url:
+                    final_video_url = clean_mp4
 
     return {
         "account_name": account_name,

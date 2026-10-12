@@ -528,11 +528,11 @@ class CreateTestimonialRequest(BaseModel):
 class CreateReelRequest(BaseModel):
     video_url: Optional[str] = None
     instagram_url: Optional[str] = None
-    account_name: Optional[str] = "@chovique_chocolatier"
+    account_name: Optional[str] = None
     likes: Optional[str] = "0"
     comments: Optional[str] = "0"
     views: Optional[str] = "0 views"
-    title: Optional[str] = "Instagram Reel"
+    title: Optional[str] = None
     sort_order: int = 0
     is_active: bool = True
 
@@ -541,11 +541,11 @@ class ReelResponse(BaseModel):
     id: str
     videoUrl: Optional[str] = None
     instagramUrl: Optional[str] = None
-    accountName: Optional[str] = "@chovique_chocolatier"
+    accountName: Optional[str] = None
     likes: Optional[str] = "0"
     comments: Optional[str] = "0"
     views: Optional[str] = "0 views"
-    title: Optional[str] = "Instagram Reel"
+    title: Optional[str] = None
 
 
 # ======================================================
