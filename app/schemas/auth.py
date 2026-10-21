@@ -246,3 +246,18 @@ class AuthUserResponse(BaseModel):
     user: UserResponse
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
+
+class RefreshTokenResponse(BaseModel):
+    message: str
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    expires_in: int = 300

@@ -26,6 +26,9 @@ from app.schemas.auth import (
     UpdatePasswordRequest,
     OTPSentResponse,
     AuthUserResponse,
+    RefreshTokenRequest,
+    RefreshTokenResponse,
+    ForgotPasswordResponse,
 )
 from app.schemas.token import MessageResponse
 from app.schemas.user import UserResponse
@@ -365,7 +368,7 @@ async def set_password(
 # FORGOT PASSWORD
 # ======================================================
 
-@router.post("/forgot-password", response_model=MessageResponse, dependencies=[Depends(RateLimiter(times=3, seconds=60))])
+@router.post("/forgot-password", response_model=ForgotPasswordResponse, dependencies=[Depends(RateLimiter(times=3, seconds=60))])
 async def forgot_password(
     request: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
@@ -387,7 +390,7 @@ async def forgot_password(
 # RESEND FORGOT PASSWORD OTP
 # ======================================================
 
-@router.post("/resend-forgot-otp", response_model=MessageResponse, dependencies=[Depends(RateLimiter(times=3, seconds=60))])
+@router.post("/resend-forgot-otp", response_model=ForgotPasswordResponse, dependencies=[Depends(RateLimiter(times=3, seconds=60))])
 async def resend_forgot_password_otp(
     request: ResendForgotOTPRequest,
     db: AsyncSession = Depends(get_db),
@@ -460,15 +463,27 @@ async def change_password(
 # REFRESH TOKEN
 # ======================================================
 
-@router.post("/refresh", response_model=MessageResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60))])
+@router.post("/refresh", response_model=RefreshTokenResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def refresh_token(
     response: Response,
+    body: RefreshTokenRequest | None = None,
     refresh_token: str | None = Cookie(
         default=None
     ),
+    x_refresh_token: str | None = Header(
+        default=None, alias="x-refresh-token"
+    ),
     db: AsyncSession = Depends(get_db),
 ):
-    if not refresh_token:
+    token_candidate = None
+    if isinstance(refresh_token, str) and refresh_token.strip():
+        token_candidate = refresh_token.strip()
+    elif body and isinstance(body.refresh_token, str) and body.refresh_token.strip():
+        token_candidate = body.refresh_token.strip()
+    elif isinstance(x_refresh_token, str) and x_refresh_token.strip():
+        token_candidate = x_refresh_token.strip()
+
+    if not token_candidate:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token missing."
@@ -476,7 +491,7 @@ async def refresh_token(
     try:
         service = AuthService(db)
         result = await service.refresh_token(
-            refresh_token
+            token_candidate
         )
         # Replace old cookies
         set_auth_cookies(
@@ -485,8 +500,9 @@ async def refresh_token(
             result["refresh_token"],
         )
         return {
-            "message":
-            "Token refreshed successfully."
+            "message": "Token refreshed successfully.",
+            "access_token": result["access_token"],
+            "refresh_token": result["refresh_token"],
         }
     except ValueError as e:
         raise HTTPException(

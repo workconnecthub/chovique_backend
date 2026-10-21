@@ -14,19 +14,32 @@ from app.db.redis import redis_client
 logger = logging.getLogger(__name__)
 
 
+def _extract_tokens(
+    access_token: Optional[str],
+    authorization: Optional[str],
+) -> list[str]:
+    """
+    Extract candidate tokens from Authorization header and/or access_token cookie.
+    Authorization Bearer header is prioritized as it reflects the client's current runtime state,
+    followed by the cookie.
+    """
+    tokens: list[str] = []
+    if isinstance(authorization, str) and authorization.lower().startswith("bearer "):
+        bearer_val = authorization.split(" ", 1)[1].strip()
+        if bearer_val:
+            tokens.append(bearer_val)
+    if isinstance(access_token, str) and access_token and access_token not in tokens:
+        tokens.append(access_token)
+    return tokens
+
+
 def _extract_token(
     access_token: Optional[str],
     authorization: Optional[str],
 ) -> Optional[str]:
-    """Accept either the httponly access_token cookie or a Bearer header."""
-
-    if access_token:
-        return access_token
-
-    if authorization and authorization.lower().startswith("bearer "):
-        return authorization.split(" ", 1)[1].strip()
-
-    return None
+    """Accept either the httponly access_token cookie or a Bearer header (backwards-compatible helper)."""
+    tokens = _extract_tokens(access_token, authorization)
+    return tokens[0] if tokens else None
 
 
 async def get_current_user_id(
@@ -37,56 +50,53 @@ async def get_current_user_id(
     Resolve the authenticated user's id from the access token.
 
     Supports both the httponly `access_token` cookie (set by the backend on
-    login/register) and an `Authorization: Bearer <token>` header, so either
-    client-side auth strategy works.
+    login/register) and an `Authorization: Bearer <token>` header, testing candidate
+    tokens gracefully so stale cookies do not shadow fresh client bearer tokens.
     """
+    tokens = _extract_tokens(access_token, authorization)
 
-    token = _extract_token(access_token, authorization)
-
-    if not token:
+    if not tokens:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated.",
         )
 
-    payload = decode_token(token)
+    last_error_status = status.HTTP_401_UNAUTHORIZED
+    last_error_detail = "Invalid or expired access token."
 
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired access token.",
-        )
+    for token in tokens:
+        payload = decode_token(token)
+        if not payload:
+            continue
 
-    try:
-        is_blocked = await redis_client.get(f"blocklist:{token}")
-    except Exception as e:
-        logger.error("Token revocation verification failed due to Redis service disruption: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service is temporarily unavailable. Please try again.",
-        )
+        try:
+            is_blocked = await redis_client.get(f"blocklist:{token}")
+        except Exception as e:
+            logger.error("Token revocation verification failed due to Redis service disruption: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service is temporarily unavailable. Please try again.",
+            )
 
-    if is_blocked:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked.",
-        )
+        if is_blocked:
+            last_error_detail = "Token has been revoked."
+            continue
 
-    if payload.get("type") != "access":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token type.",
-        )
+        if payload.get("type") != "access":
+            last_error_detail = "Invalid token type."
+            continue
 
-    user_id = payload.get("sub")
+        user_id = payload.get("sub")
+        if not user_id:
+            last_error_detail = "Invalid token payload."
+            continue
 
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload.",
-        )
+        return user_id
 
-    return user_id
+    raise HTTPException(
+        status_code=last_error_status,
+        detail=last_error_detail,
+    )
 
 
 async def get_current_user(

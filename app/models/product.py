@@ -86,6 +86,8 @@ class Product(Base):
     is_featured = Column(Boolean, default=False, nullable=False)
     is_bestseller = Column(Boolean, default=False, nullable=False)
     is_new_arrival = Column(Boolean, default=False, nullable=False)
+    is_sample = Column(Boolean, default=False, nullable=False)
+    sample_price = Column(Float, nullable=True)
     sort_order = Column(Integer, default=0, nullable=False)
 
     # ==========================

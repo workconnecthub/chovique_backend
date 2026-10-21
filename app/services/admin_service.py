@@ -7,7 +7,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import UploadFile
+from fastapi import HTTPException, status, UploadFile
 from sqlalchemy import func, select, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -552,6 +552,85 @@ class AdminService:
     async def set_config(self, key: str, value: dict | list | str) -> dict | list | str:
         await self.site_config_repo.set(key, value)
         return value
+
+    async def get_landing_sections(self) -> dict:
+        data = await self.site_config_repo.get("landing_sections")
+        return data if isinstance(data, dict) else {}
+
+    async def update_landing_sections(self, payload: dict, admin_id: Optional[str] = None) -> dict:
+        existing = await self.get_landing_sections()
+        updated = {**existing}
+        for k, v in payload.items():
+            if isinstance(v, dict) and isinstance(updated.get(k), dict):
+                updated[k] = {**updated[k], **v}
+            else:
+                updated[k] = v
+        await self.site_config_repo.set("landing_sections", updated)
+        if admin_id:
+            try:
+                await self.audit_repo.log(
+                    action="update_landing_sections",
+                    user_id=admin_id,
+                    resource="config:landing_sections",
+                    details="Updated customizable landing page section titles and copy",
+                )
+            except Exception as e:
+                logger.warning("Audit log failed for update_landing_sections: %s", e)
+        return updated
+
+    async def get_story_page_config(self) -> dict:
+        data = await self.site_config_repo.get("story_page")
+        return data if isinstance(data, dict) else {}
+
+    async def update_story_page_config(self, payload: dict, admin_id: Optional[str] = None) -> dict:
+        existing = await self.get_story_page_config()
+        updated = {**existing, **payload}
+        await self.site_config_repo.set("story_page", updated)
+        if "video_url" in payload and payload["video_url"]:
+            await self.site_config_repo.set("story_video", {"video_url": payload["video_url"]})
+        if admin_id:
+            try:
+                await self.audit_repo.log(
+                    action="update_story_page",
+                    user_id=admin_id,
+                    resource="config:story_page",
+                    details="Updated Our Story page content and process configuration",
+                )
+            except Exception as e:
+                logger.warning("Audit log failed for update_story_page: %s", e)
+        return updated
+
+    async def get_contact_page_config(self) -> dict:
+        data = await self.site_config_repo.get("contact_page")
+        contact_info = await self.site_config_repo.get("contact")
+        result = {}
+        if isinstance(contact_info, dict):
+            result.update(contact_info)
+        if isinstance(data, dict):
+            result.update(data)
+        return result
+
+    async def update_contact_page_config(self, payload: dict, admin_id: Optional[str] = None) -> dict:
+        existing = await self.get_contact_page_config()
+        updated = {**existing, **payload}
+        await self.site_config_repo.set("contact_page", updated)
+        base_contact_keys = ["email", "phone", "whatsapp", "support_hours", "address", "instagram", "facebook", "twitter"]
+        base_contact = {k: updated[k] for k in base_contact_keys if k in updated}
+        if base_contact:
+            existing_contact = await self.site_config_repo.get("contact")
+            merged_contact = {**(existing_contact if isinstance(existing_contact, dict) else {}), **base_contact}
+            await self.site_config_repo.set("contact", merged_contact)
+        if admin_id:
+            try:
+                await self.audit_repo.log(
+                    action="update_contact_page",
+                    user_id=admin_id,
+                    resource="config:contact_page",
+                    details="Updated Contact Us page details and channel configuration",
+                )
+            except Exception as e:
+                logger.warning("Audit log failed for update_contact_page: %s", e)
+        return updated
 
     async def delete_coupon(self, code: str):
         from app.repositories.coupon_repository import CouponRepository
@@ -2044,6 +2123,42 @@ class AdminService:
         )
         return BannerResponse.from_orm_model(banner)
 
+    async def update_banner(
+        self,
+        banner_id: str,
+        payload: UpdateBannerRequest,
+        admin_id: Optional[str] = None,
+    ) -> BannerResponse:
+        banner = await self.banner_repo.get_by_id(banner_id)
+        if not banner:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Banner '{banner_id}' not found.",
+            )
+
+        update_data = payload.model_dump(exclude_unset=True)
+        # Filter valid model attributes
+        filtered_data = {
+            k: v for k, v in update_data.items()
+            if hasattr(banner, k) and v is not None
+        }
+
+        if filtered_data:
+            banner = await self.banner_repo.update(banner, **filtered_data)
+
+        if admin_id:
+            try:
+                await self.audit_repo.log(
+                    action="update_banner",
+                    user_id=admin_id,
+                    resource=f"banner:{banner_id}",
+                    details=f"Updated banner slide: {banner.title}",
+                )
+            except Exception as e:
+                logger.warning("Audit log failed for update_banner: %s", e)
+
+        return BannerResponse.from_orm_model(banner)
+
     async def delete_banner(self, banner_id: str, superadmin_id: str) -> bool:
         success = await self.banner_repo.delete(banner_id)
         if success:
@@ -2217,23 +2332,109 @@ class AdminService:
 
     async def set_stats(self, payload: SetStatsRequest) -> StatsResponse:
         data = payload.model_dump()
-        happy_cust = data.get("happy_customers", 50000)
-        prod_avail = data.get("products_available") if data.get("products_available") is not None else data.get("unique_flavors", 120)
-        orders_deliv = data.get("orders_delivered") if data.get("orders_delivered") is not None else data.get("countries_shipped", 1500)
-        rating_pct = data.get("customer_rating_percent") if data.get("customer_rating_percent") is not None else data.get("five_star_reviews_percent", 98)
+        happy_cust = data.get("happy_customers") if data.get("happy_customers") is not None else 50000
+
+        prod_avail = data.get("products_available")
+        if prod_avail is None:
+            prod_avail = data.get("unique_flavors")
+        if prod_avail is None:
+            prod_avail = 120
+
+        orders_deliv = data.get("orders_delivered")
+        if orders_deliv is None:
+            orders_deliv = data.get("countries_shipped")
+        if orders_deliv is None:
+            orders_deliv = 1500
+
+        rating_pct = data.get("customer_rating_percent")
+        if rating_pct is None:
+            rating_pct = data.get("five_star_reviews_percent")
+        if rating_pct is None:
+            rating_pct = 98
 
         stats_dict = {
-            "happy_customers": happy_cust,
-            "products_available": prod_avail,
-            "orders_delivered": orders_deliv,
-            "customer_rating_percent": rating_pct,
-            "unique_flavors": prod_avail,
-            "countries_shipped": orders_deliv,
-            "five_star_reviews_percent": rating_pct,
+            "happy_customers": int(happy_cust),
+            "products_available": int(prod_avail),
+            "orders_delivered": int(orders_deliv),
+            "customer_rating_percent": int(rating_pct),
+            "unique_flavors": int(prod_avail),
+            "countries_shipped": int(orders_deliv),
+            "five_star_reviews_percent": int(rating_pct),
         }
 
         await self.site_config_repo.set("stats", stats_dict)
         return StatsResponse(**stats_dict)
+
+    async def get_live_database_stats(self) -> dict:
+        """
+        Query real-time database counts for:
+        - Happy Customers (registered customers count)
+        - Products Available (active products count)
+        - Orders Delivered (orders marked as Delivered)
+        - Customer Rating % (average approved rating percentage)
+        """
+        from sqlalchemy import or_
+        from app.models.review import ProductReview
+        from app.models.testimonial import Testimonial
+
+        # 1. Total registered customers
+        cust_res = await self.db.execute(
+            select(func.count()).select_from(User).where(User.role == "customer")
+        )
+        total_customers = cust_res.scalar() or 0
+
+        # 2. Total active catalog products
+        prod_res = await self.db.execute(
+            select(func.count()).select_from(Product).where(Product.is_active.is_(True))
+        )
+        total_products = prod_res.scalar() or 0
+
+        # 3. Delivered orders count
+        deliv_res = await self.db.execute(
+            select(func.count()).select_from(Order).where(
+                or_(
+                    Order.status.ilike("Delivered"),
+                    Order.fulfillment_status == "DELIVERED",
+                )
+            )
+        )
+        delivered_orders = deliv_res.scalar() or 0
+
+        # Total orders across all statuses for additional context
+        total_orders_res = await self.db.execute(
+            select(func.count()).select_from(Order)
+        )
+        total_orders = total_orders_res.scalar() or 0
+
+        # 4. Customer Rating %
+        review_rating_res = await self.db.execute(
+            select(func.avg(ProductReview.rating)).where(ProductReview.status == "approved")
+        )
+        avg_review = review_rating_res.scalar()
+
+        if avg_review is not None and avg_review > 0:
+            rating_percent = min(100, max(0, round((float(avg_review) / 5.0) * 100)))
+        else:
+            test_res = await self.db.execute(
+                select(func.avg(Testimonial.rating)).where(Testimonial.status == "approved")
+            )
+            avg_test = test_res.scalar()
+            if avg_test is not None and avg_test > 0:
+                rating_percent = min(100, max(0, round((float(avg_test) / 5.0) * 100)))
+            else:
+                rating_percent = 98
+
+        return {
+            "happy_customers": total_customers,
+            "products_available": total_products,
+            "orders_delivered": delivered_orders,
+            "customer_rating_percent": rating_percent,
+            # Aliases for backward compatibility
+            "unique_flavors": total_products,
+            "countries_shipped": delivered_orders,
+            "five_star_reviews_percent": rating_percent,
+            "total_orders": total_orders,
+        }
 
     async def set_contact(self, payload: SetContactRequest) -> ContactInfoResponse:
         await self.site_config_repo.set("contact", payload.model_dump())

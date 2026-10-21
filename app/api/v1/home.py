@@ -201,3 +201,42 @@ async def get_story_video(
     url = await service.get_story_video()
     return {"video_url": url}
 
+
+# ======================================================
+# GET LANDING PAGE CUSTOMIZABLE SECTIONS
+# ======================================================
+
+@router.get(
+    "/landing-sections",
+    summary="Get public landing page customizable sections configuration",
+)
+async def get_landing_sections(
+    db: AsyncSession = Depends(get_db),
+):
+    service = HomeService(db)
+    return await service.get_landing_sections()
+
+
+@router.get(
+    "/story-page",
+    summary="Get Our Story page content and process configuration",
+)
+async def get_story_page(
+    db: AsyncSession = Depends(get_db),
+):
+    service = HomeService(db)
+    return await service.get_story_page_config()
+
+
+@router.get(
+    "/contact-page",
+    summary="Get Contact Us page details and channel configuration",
+)
+async def get_contact_page(
+    db: AsyncSession = Depends(get_db),
+):
+    service = HomeService(db)
+    return await service.get_contact_page_config()
+
+
+

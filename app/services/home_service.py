@@ -281,3 +281,23 @@ class HomeService:
                 "title": r.title,
             })
         return result
+
+    async def get_landing_sections(self) -> dict:
+        data = await self.config_repo.get("landing_sections")
+        return data if isinstance(data, dict) else {}
+
+    async def get_story_page_config(self) -> dict:
+        data = await self.config_repo.get("story_page")
+        return data if isinstance(data, dict) else {}
+
+    async def get_contact_page_config(self) -> dict:
+        data = await self.config_repo.get("contact_page")
+        contact_info = await self.config_repo.get("contact")
+        result = {}
+        if isinstance(contact_info, dict):
+            result.update(contact_info)
+        if isinstance(data, dict):
+            result.update(data)
+        return result
+
+

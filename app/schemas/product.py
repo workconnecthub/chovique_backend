@@ -67,6 +67,8 @@ class ProductResponse(BaseModel):
     isFeatured: bool = False
     isBestseller: bool = False
     isNewArrival: bool = False
+    isSample: bool = False
+    samplePrice: Optional[float] = None
     images: list[str] = []
     reviews: list[ReviewResponse] = []
 
@@ -126,6 +128,8 @@ class ProductResponse(BaseModel):
             isFeatured=getattr(product, "is_featured", False),
             isBestseller=getattr(product, "is_bestseller", False),
             isNewArrival=getattr(product, "is_new_arrival", False),
+            isSample=getattr(product, "is_sample", False),
+            samplePrice=getattr(product, "sample_price", None),
             images=getattr(product, "images", []) or [],
             reviews=reviews,
         )
@@ -156,6 +160,8 @@ class ProductCreate(BaseModel):
     is_featured: bool = False
     is_bestseller: bool = False
     is_new_arrival: bool = False
+    is_sample: bool = False
+    sample_price: Optional[float] = None
     images: list[str] = []
 
 
@@ -185,7 +191,11 @@ class ProductUpdate(BaseModel):
     is_featured: Optional[bool] = None
     is_bestseller: Optional[bool] = None
     is_new_arrival: Optional[bool] = None
+    is_sample: Optional[bool] = Field(default=None, alias="isSample")
+    sample_price: Optional[float] = Field(default=None, alias="samplePrice")
     images: Optional[list[str]] = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 

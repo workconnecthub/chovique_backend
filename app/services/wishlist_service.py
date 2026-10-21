@@ -54,3 +54,17 @@ class WishlistService:
     async def is_product_wishlisted(self, user_id: str, product_id: str) -> bool:
         items = await self.wishlist_repo.get_user_wishlist(user_id)
         return any(i.product_id == product_id for i in items)
+
+    async def sync_wishlist(self, user_id: str, product_ids: list[str]) -> list[WishlistItemResponseSchema]:
+        """
+        Synchronize guest wishlist items into customer account.
+        Validates that products exist and are active.
+        Deduplicates items and is idempotent across multiple retries.
+        """
+        for prod_id in product_ids:
+            product = await self.product_repo.get_by_id(prod_id)
+            if product and product.is_active:
+                await self.wishlist_repo.add_item(user_id, prod_id)
+
+        return await self.get_wishlist(user_id)
+

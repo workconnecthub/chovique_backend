@@ -797,8 +797,8 @@ class AuthService:
         # Don't expose email existence
         if not user:
             return {
-                "message":
-                "If email exists, OTP has been sent.",
+                "message": "If email exists, OTP has been sent.",
+                "expires_in": settings.OTP_EXPIRE_SECONDS,
             }
 
         otp = self.otp_service.generate_otp()
@@ -818,7 +818,10 @@ class AuthService:
 
         logger.info("Forgot password OTP sent to %s", email)
 
-        return {"message": "If email exists, OTP has been sent."}
+        return {
+            "message": "If email exists, OTP has been sent.",
+            "expires_in": settings.OTP_EXPIRE_SECONDS,
+        }
 
     # ======================================================
     # RESEND FORGOT PASSWORD OTP
@@ -840,6 +843,7 @@ class AuthService:
         if not user:
             return {
                 "message": "If email exists, OTP has been sent.",
+                "expires_in": settings.OTP_EXPIRE_SECONDS,
             }
 
         otp = self.otp_service.generate_otp()
@@ -862,7 +866,10 @@ class AuthService:
 
         logger.info("Forgot password OTP resent to %s", email)
 
-        return {"message": "If email exists, OTP has been sent."}
+        return {
+            "message": "If email exists, OTP has been sent.",
+            "expires_in": settings.OTP_EXPIRE_SECONDS,
+        }
 
 
     # ======================================================

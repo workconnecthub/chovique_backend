@@ -1,7 +1,7 @@
 import re
 from datetime import date, datetime
-from typing import Optional, Generic, TypeVar, Union
-from pydantic import BaseModel, field_validator, model_validator
+from typing import Optional, Generic, TypeVar, Union, Any
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.user import UserResponse
 from app.schemas.order import OrderResponse
@@ -480,11 +480,11 @@ class UpdateAdminRequest(BaseModel):
 
 class CreateBannerRequest(BaseModel):
     title: str
-    subtitle: str
-    tag: str
+    subtitle: str = ""
+    tag: str = ""
     image: Optional[str] = None
-    button_text: str
-    link: str
+    button_text: str = "Explore Collection"
+    link: str = "/shop"
     sort_order: int = 0
     is_active: bool = True
 
@@ -500,10 +500,22 @@ class UpdateBannerRequest(BaseModel):
     subtitle: Optional[str] = None
     tag: Optional[str] = None
     image: Optional[str] = None
-    button_text: Optional[str] = None
+    button_text: Optional[str] = Field(None, alias="buttonText")
     link: Optional[str] = None
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_banner_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "buttonText" in data and "button_text" not in data:
+                data["button_text"] = data["buttonText"]
+            if "image_url" in data and "image" not in data:
+                data["image"] = data["image_url"]
+        return data
 
 
 # ======================================================
@@ -553,12 +565,12 @@ class ReelResponse(BaseModel):
 # ======================================================
 
 class SetStatsRequest(BaseModel):
-    happy_customers: int = 50000
-    products_available: Optional[int] = 120
-    orders_delivered: Optional[int] = 1500
-    customer_rating_percent: Optional[int] = 98
+    happy_customers: Optional[int] = None
+    products_available: Optional[int] = None
+    orders_delivered: Optional[int] = None
+    customer_rating_percent: Optional[int] = None
 
-    # Optional legacy fallback fields
+    # Optional legacy / alternate field names
     unique_flavors: Optional[int] = None
     countries_shipped: Optional[int] = None
     five_star_reviews_percent: Optional[int] = None

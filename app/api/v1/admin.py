@@ -1423,6 +1423,76 @@ async def update_platform_config(
     service = AdminService(db)
     return await service.set_config("platform_settings", payload)
 
+@router.get(
+    "/config/landing-sections",
+    summary="Get landing page sections CMS configuration",
+)
+async def get_landing_sections_config(
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.get_landing_sections()
+
+@router.patch(
+    "/config/landing-sections",
+    summary="Update landing page sections CMS configuration",
+)
+async def update_landing_sections_config(
+    payload: dict,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.update_landing_sections(payload, admin_id=current_user.id)
+
+@router.get(
+    "/config/story-page",
+    summary="Get Our Story page content and process configuration (admin)",
+)
+async def get_story_page_config(
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.get_story_page_config()
+
+@router.patch(
+    "/config/story-page",
+    summary="Update Our Story page content and process configuration (admin)",
+)
+async def update_story_page_config(
+    payload: dict,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.update_story_page_config(payload, admin_id=current_user.id)
+
+@router.get(
+    "/config/contact-page",
+    summary="Get Contact Us page configuration (admin)",
+)
+async def get_contact_page_config(
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.get_contact_page_config()
+
+@router.patch(
+    "/config/contact-page",
+    summary="Update Contact Us page configuration (admin)",
+)
+async def update_contact_page_config(
+    payload: dict,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.update_contact_page_config(payload, admin_id=current_user.id)
+
+
 # ======================================================
 # ORDERS (admin — all orders site-wide)
 # ======================================================
@@ -2061,10 +2131,10 @@ async def upload_banner_image(
 )
 async def create_banner(
     title: str = Form(...),
-    subtitle: str = Form(...),
-    tag: str = Form(...),
-    button_text: str = Form(...),
-    link: str = Form(...),
+    subtitle: str = Form(default=""),
+    tag: str = Form(default=""),
+    button_text: str = Form(default="Explore Collection"),
+    link: str = Form(default="/shop"),
     sort_order: int = Form(default=0),
     is_active: bool = Form(default=True),
     image: UploadFile = File(default=None),
@@ -2098,7 +2168,7 @@ async def update_banner(
     db: AsyncSession = Depends(get_db),
 ):
     service = AdminService(db)
-    return await service.update_banner(banner_id, payload)
+    return await service.update_banner(banner_id, payload, admin_id=current_user.id)
 
 @router.delete(
     "/banners/{banner_id}",
@@ -2466,6 +2536,19 @@ async def set_stats(
     return await service.set_stats(payload)
 
 
+@router.get(
+    "/config/stats/live-database",
+    summary="Get real live database metric counts for site stats (admin only)",
+)
+async def get_live_database_stats(
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.get_live_database_stats()
+
+
+
 @router.put(
     "/config/contact",
     response_model=ContactInfoResponse,
@@ -2546,6 +2629,32 @@ async def delete_story_video(
 ):
     service = AdminService(db)
     video_url = await service.delete_story_video()
+    return {"video_url": video_url}
+
+
+@router.post(
+    "/upload-image",
+    summary="Upload image to storage bucket for CMS (admin only)",
+)
+async def upload_cms_image(
+    image: UploadFile = File(...),
+    current_user: User = Depends(require_role("admin", "superadmin")),
+):
+    from app.services.storage_service import storage_service
+    image_url = await storage_service.upload_image(file=image, folder="chocolate-world/cms")
+    return {"image_url": image_url}
+
+
+@router.post(
+    "/upload-video",
+    summary="Upload video to storage bucket for CMS (admin only)",
+)
+async def upload_cms_video(
+    video: UploadFile = File(...),
+    current_user: User = Depends(require_role("admin", "superadmin")),
+):
+    from app.services.storage_service import storage_service
+    video_url = await storage_service.upload_video(file=video, folder="chocolate-world/cms")
     return {"video_url": video_url}
 
 

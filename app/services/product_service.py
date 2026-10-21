@@ -127,6 +127,8 @@ class ProductService:
             is_featured=data.is_featured,
             is_bestseller=data.is_bestseller,
             is_new_arrival=data.is_new_arrival,
+            is_sample=data.is_sample,
+            sample_price=data.sample_price,
         )
 
         logger.info("Product created: id=%s name=%s", product.id, product.name)

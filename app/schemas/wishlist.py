@@ -15,3 +15,8 @@ class WishlistItemResponseSchema(BaseModel):
 
 class WishlistCountResponse(BaseModel):
     count: int
+
+
+class SyncWishlistPayload(BaseModel):
+    product_ids: list[str] = []
+

@@ -164,6 +164,8 @@ async def create_product(
     is_featured: Optional[bool] = Form(default=False),
     is_bestseller: Optional[bool] = Form(default=False),
     is_new_arrival: Optional[bool] = Form(default=False),
+    is_sample: Optional[bool] = Form(default=False),
+    sample_price: Optional[float] = Form(default=None),
     original_price: Optional[float] = Form(default=None),
     weight: Optional[str] = Form(default=None),
     stock: Optional[int] = Form(default=10),
@@ -301,6 +303,8 @@ async def create_product(
         is_featured=is_featured or False,
         is_bestseller=is_bestseller or False,
         is_new_arrival=is_new_arrival or False,
+        is_sample=is_sample or False,
+        sample_price=sample_price,
     )
 
     service = ProductService(db)

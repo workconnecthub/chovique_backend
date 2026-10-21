@@ -1,6 +1,7 @@
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.cart import CartItem
 from app.repositories.cart_repository import CartRepository
 from app.repositories.product_repository import ProductRepository
 from app.schemas.cart import CartItemResponseSchema, CartResponseSchema
@@ -30,7 +31,7 @@ class CartService:
         for item in cart.items:
             product = item.product
             # Validate product is active
-            if product and product.is_active:
+            if product and product.is_active and getattr(product, "is_available", True) is not False:
                 prod_res = ProductResponse.from_orm_model(product)
                 subtotal += product.price * item.quantity
                 item_count += item.quantity
@@ -86,10 +87,41 @@ class CartService:
         return await self.get_cart(user_id)
 
     async def sync_cart(self, user_id: str, items: list) -> CartResponseSchema:
+        """
+        Synchronize guest cart items with authenticated customer cart.
+        Quantity policy:
+          - If product already in authenticated cart: min(max(existing_qty, guest_qty), product.stock)
+          - If product not in authenticated cart: min(guest_qty, product.stock)
+        Ensures idempotency (retries do not duplicate quantities) and enforces stock availability.
+        Existing authenticated items not in guest cart are preserved.
+        """
         cart = await self.cart_repo.get_or_create_user_cart(user_id)
+        existing_items = {item.product_id: item for item in (cart.items or [])}
+
         for item in items:
             product = await self.product_repo.get_by_id(item.product_id)
-            if product and product.is_active and product.stock >= item.quantity:
-                await self.cart_repo.add_or_update_item(cart.id, item.product_id, item.quantity)
-        
+            if (
+                not product
+                or not product.is_active
+                or getattr(product, "is_available", True) is False
+                or product.stock <= 0
+            ):
+                continue
+
+            if item.product_id in existing_items:
+                existing_item = existing_items[item.product_id]
+                new_qty = min(max(existing_item.quantity, item.quantity), product.stock)
+                if new_qty > 0 and new_qty != existing_item.quantity:
+                    await self.cart_repo.update_item_quantity(cart.id, item.product_id, new_qty)
+                    existing_item.quantity = new_qty
+            else:
+                new_qty = min(item.quantity, product.stock)
+                if new_qty > 0:
+                    new_item = CartItem(cart_id=cart.id, product_id=item.product_id, quantity=new_qty)
+                    self.db.add(new_item)
+                    await self.db.commit()
+                    await self.db.refresh(new_item)
+                    existing_items[item.product_id] = new_item
+
         return await self.get_cart(user_id)
+
