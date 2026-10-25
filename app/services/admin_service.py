@@ -632,6 +632,27 @@ class AdminService:
                 logger.warning("Audit log failed for update_contact_page: %s", e)
         return updated
 
+    async def get_footer_config(self) -> dict:
+        data = await self.site_config_repo.get("footer_config")
+        return data if isinstance(data, dict) else {}
+
+    async def update_footer_config(self, payload: dict, admin_id: Optional[str] = None) -> dict:
+        existing = await self.get_footer_config()
+        updated = {**existing, **payload}
+        await self.site_config_repo.set("footer_config", updated)
+        if admin_id:
+            try:
+                await self.audit_repo.log(
+                    action="update_footer_cms",
+                    user_id=admin_id,
+                    resource="config:footer_config",
+                    details="Updated Website Footer content management configuration",
+                )
+            except Exception as e:
+                logger.warning("Audit log failed for update_footer_cms: %s", e)
+        return updated
+
+
     async def delete_coupon(self, code: str):
         from app.repositories.coupon_repository import CouponRepository
         coupon_repo = CouponRepository(self.db)

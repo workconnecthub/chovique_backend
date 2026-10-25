@@ -239,4 +239,16 @@ async def get_contact_page(
     return await service.get_contact_page_config()
 
 
+@router.get(
+    "/footer-config",
+    summary="Get Footer configuration (public)",
+)
+async def get_footer_config(
+    db: AsyncSession = Depends(get_db),
+):
+    service = HomeService(db)
+    return await service.get_footer_config()
+
+
+
 

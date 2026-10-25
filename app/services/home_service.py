@@ -300,4 +300,9 @@ class HomeService:
             result.update(data)
         return result
 
+    async def get_footer_config(self) -> dict:
+        data = await self.config_repo.get("footer_config")
+        return data if isinstance(data, dict) else {}
+
+
 

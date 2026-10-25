@@ -1493,6 +1493,32 @@ async def update_contact_page_config(
     return await service.update_contact_page_config(payload, admin_id=current_user.id)
 
 
+@router.get(
+    "/config/footer",
+    summary="Get Footer configuration (admin / superadmin)",
+)
+async def get_footer_config(
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.get_footer_config()
+
+
+@router.patch(
+    "/config/footer",
+    summary="Update Footer configuration (admin / superadmin)",
+)
+async def update_footer_config(
+    payload: dict,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AdminService(db)
+    return await service.update_footer_config(payload, admin_id=current_user.id)
+
+
+
 # ======================================================
 # ORDERS (admin — all orders site-wide)
 # ======================================================
