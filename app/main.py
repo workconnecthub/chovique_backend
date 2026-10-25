@@ -65,6 +65,11 @@ async def lifespan(app: FastAPI):
                     except Exception:
                         pass
                 try:
+                    await autocommit_conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_available BOOLEAN NOT NULL DEFAULT TRUE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS is_sample BOOLEAN NOT NULL DEFAULT FALSE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS sample_price DOUBLE PRECISION;"))
+                    await autocommit_conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;"))
+                    await autocommit_conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS hover_image TEXT;"))
                     await autocommit_conn.execute(text("ALTER TABLE coupons ADD COLUMN IF NOT EXISTS coupon_type VARCHAR(50) DEFAULT 'CUSTOMER';"))
                     await autocommit_conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS order_id VARCHAR(36);"))
                     await autocommit_conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS status_change_count INTEGER DEFAULT 0;"))

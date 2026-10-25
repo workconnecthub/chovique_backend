@@ -84,6 +84,11 @@ async def init_db() -> None:
             "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_featured BOOLEAN NOT NULL DEFAULT FALSE;",
             "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_bestseller BOOLEAN NOT NULL DEFAULT FALSE;",
             "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_new_arrival BOOLEAN NOT NULL DEFAULT FALSE;",
+            "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_available BOOLEAN NOT NULL DEFAULT TRUE;",
+            "ALTER TABLE products ADD COLUMN IF NOT EXISTS is_sample BOOLEAN NOT NULL DEFAULT FALSE;",
+            "ALTER TABLE products ADD COLUMN IF NOT EXISTS sample_price DOUBLE PRECISION;",
+            "ALTER TABLE products ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;",
+            "ALTER TABLE products ADD COLUMN IF NOT EXISTS hover_image TEXT;",
             "ALTER TABLE products ADD COLUMN IF NOT EXISTS images JSON;",
             # Orders
             "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) NOT NULL DEFAULT 'PENDING';",
