@@ -3,7 +3,7 @@ import os
 import re
 import urllib.parse
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,8 +21,10 @@ from app.repositories.review_repository import ReviewRepository
 from app.repositories.ticket_repository import TicketRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.site_config_repository import SiteConfigRepository
+from app.repositories.platform_settings_repository import PlatformSettingsRepository
 from app.core.config import settings
 from app.services.mail_service import MailService
+from app.services.return_service import calculate_window_seconds
 
 from app.schemas.contact import ContactMessageRequest, ContactMessageResponse
 from app.schemas.coupon import CouponValidationRequest, CouponValidationResponse, UserCouponResponse
@@ -375,7 +377,13 @@ class CustomerService:
             from app.services.wallet_service import WalletService
             wallet_service = WalletService(self.db)
 
+            # Reward coins eligibility: strictly customers only
+            user_obj = await self.user_repo.get_by_id(user_id)
+            is_customer = (user_obj is not None and getattr(user_obj, "role", None) == "customer")
+
             if payload.coins_to_use and payload.coins_to_use > 0:
+                if not is_customer:
+                    raise ValueError("Staff accounts are not eligible to redeem customer reward coins.")
                 redemption_calc = await wallet_service.calculate_redemption(
                     user_id=user_id,
                     subtotal=subtotal,
@@ -456,8 +464,8 @@ class CustomerService:
             )
 
 
-            # Deduct redeemed coins from wallet
-            if coins_used > 0:
+            # Deduct redeemed coins from wallet (strictly customers only)
+            if coins_used > 0 and is_customer:
                 await wallet_service.redeem_coins(
                     user_id=user_id,
                     order_id=order.id,
@@ -465,14 +473,17 @@ class CustomerService:
                     commit=False,
                 )
 
-            # Calculate and credit earned coins for confirmed order
-            coins_earned, _ = await wallet_service.earn_coins(
-                user_id=user_id,
-                order_id=order.id,
-                payable_amount=total,
-                commit=False,
-            )
-            order.coins_earned = coins_earned
+            # Calculate and credit earned coins for confirmed order (strictly customers only)
+            if is_customer:
+                coins_earned, _ = await wallet_service.earn_coins(
+                    user_id=user_id,
+                    order_id=order.id,
+                    payable_amount=total,
+                    commit=False,
+                )
+                order.coins_earned = coins_earned
+            else:
+                order.coins_earned = 0
 
             if payload.coupon_code and coupon_discount > 0:
                 from app.models.coupon import CouponUsage
@@ -590,13 +601,15 @@ class CustomerService:
                 orders = await self.order_repo.get_all_orders_for_admin()
         else:
             orders = await self.order_repo.get_user_orders(user_id)
-        return [self._format_order_response(o) for o in orders]
+        settings_row = await PlatformSettingsRepository(self.db).get()
+        return [self._format_order_response(o, settings=settings_row) for o in orders]
 
     async def get_order_by_id(self, order_id: str, user_id: str) -> OrderResponse | None:
         order = await self.order_repo.get_by_id(order_id)
         if not order or order.user_id != user_id:
             return None
-        return self._format_order_response(order)
+        settings_row = await PlatformSettingsRepository(self.db).get()
+        return self._format_order_response(order, settings=settings_row)
 
     async def cancel_order(self, order_id: str, user_id: str, reason: str | None = None) -> OrderResponse | None:
         order = await self.order_repo.get_by_id(order_id)
@@ -709,9 +722,9 @@ class CustomerService:
             raise ValueError("A valid delivery timestamp is required to request a return.")
         if delivery_dt.tzinfo is None:
             delivery_dt = delivery_dt.replace(tzinfo=timezone.utc)
-        diff_days = (now - delivery_dt).total_seconds() / 86400.0
-        if diff_days >= 4.0:
-            raise ValueError("The 4-day return window after delivery has expired.")
+        diff_seconds = (now - delivery_dt).total_seconds()
+        if diff_seconds > 1800.0:
+            raise ValueError("The return request window has expired. Returns must be requested within 30 minutes of delivery.")
 
         order.status = "Return Requested"
         if hasattr(order, "returned_at"):
@@ -720,6 +733,50 @@ class CustomerService:
             order.return_reason = reason
 
         self.db.add(order)
+
+        # Sync or create ReturnRequest and SupportTicket record
+        try:
+            from app.models.return_request import ReturnRequest, generate_return_id
+            from app.models.ticket import SupportTicket
+            from sqlalchemy import select
+            ret_res = await self.db.execute(select(ReturnRequest).where(ReturnRequest.order_id == order.id))
+            ret_obj = ret_res.scalars().first()
+            if not ret_obj:
+                user_obj = await self.user_repo.get_by_id(user_id)
+                ret_id = generate_return_id()
+                new_ret = ReturnRequest(
+                    id=ret_id,
+                    order_id=order.id,
+                    customer_id=user_id,
+                    customer_name=user_obj.full_name if user_obj else "Customer",
+                    customer_email=user_obj.email if user_obj else None,
+                    customer_phone=user_obj.phone if user_obj else None,
+                    order_amount=float(order.total or 0.0),
+                    payment_method=str(order.payment_method or "Cash on Delivery"),
+                    delivery_address=order.shipping_address or {},
+                    delivered_at=delivery_dt,
+                    reason=reason or "Other issue",
+                    description=reason or "Customer requested return.",
+                    status="Pending",
+                )
+                self.db.add(new_ret)
+                await self.db.flush()
+
+                ticket = SupportTicket(
+                    customer_id=user_id,
+                    customer_name=user_obj.full_name if user_obj else "Customer",
+                    category="Return Request",
+                    description=f"[{reason or 'Other issue'}] Customer requested return.",
+                    order_id=order.id,
+                    status="Pending",
+                    return_request_id=new_ret.id,
+                )
+                self.db.add(ticket)
+                await self.db.flush()
+                new_ret.ticket_id = ticket.id
+        except Exception as e_ret:
+            logger.warning("Failed to automatically link ReturnRequest in legacy return_order: %s", e_ret)
+
         await self.db.commit()
 
         try:
@@ -759,7 +816,7 @@ class CustomerService:
         db_order = await self.order_repo.get_by_id(order.id)
         return self._format_order_response(db_order or order)
 
-    def _format_order_response(self, order) -> OrderResponse:
+    def _format_order_response(self, order, settings=None) -> OrderResponse:
         cart_items = []
         for item in getattr(order, "items", []) or []:
             if getattr(item, "product", None):
@@ -839,16 +896,40 @@ class CustomerService:
                 if diff_hours < 24.0:
                     is_cancellable = True
 
-        # 2. Return Order eligibility: status is Delivered, valid delivery timestamp exists, within 4 days from delivery, not returned/refunded
+        # 2. Return Order eligibility: status is Delivered, valid delivery timestamp exists, within window from delivery, not returned/refunded
         is_returnable = False
+        return_window_expired = False
+        return_deadline = None
+
+        ret_enabled = True
+        ret_val = 30
+        ret_unit = "minutes"
+        ret_photo_req = False
+        if settings:
+            ret_enabled = getattr(settings, "return_requests_enabled", True)
+            if ret_enabled is None:
+                ret_enabled = True
+            ret_val = getattr(settings, "return_window_value", 30) or 30
+            ret_unit = getattr(settings, "return_window_unit", "minutes") or "minutes"
+            ret_photo_req = bool(getattr(settings, "return_photo_required", False))
+
+        window_seconds = calculate_window_seconds(ret_unit, ret_val)
+
         if str(order.status or "") == "Delivered" and str(getattr(order, "payment_status", "") or "").upper() not in ("REFUNDED", "PARTIALLY REFUNDED") and str(order.status or "") not in ("Returned", "Return Requested"):
             delivery_dt = getattr(order, "delivered_at", None)
             if delivery_dt:
                 if delivery_dt.tzinfo is None:
                     delivery_dt = delivery_dt.replace(tzinfo=timezone.utc)
-                diff_days = (now_utc - delivery_dt).total_seconds() / 86400.0
-                if diff_days < 4.0:
-                    is_returnable = True
+                deadline_dt = delivery_dt + timedelta(seconds=window_seconds)
+                return_deadline = deadline_dt
+                diff_seconds = (now_utc - delivery_dt).total_seconds()
+                if diff_seconds <= window_seconds:
+                    if ret_enabled:
+                        is_returnable = True
+                    else:
+                        is_returnable = False
+                else:
+                    return_window_expired = True
 
         # Generate WhatsApp order confirmation links
         cust_phone_clean = re.sub(r"\D", "", str(ship_addr.phone or "")) if ship_addr else ""
@@ -921,6 +1002,13 @@ class CustomerService:
             user_id=getattr(order, "user_id", None),
             is_cancellable=is_cancellable,
             is_returnable=is_returnable,
+            return_deadline=return_deadline,
+            return_window_expired=return_window_expired,
+            return_request=getattr(order, "return_request", None),
+            return_requests_enabled=ret_enabled,
+            return_photo_required=ret_photo_req,
+            return_window_value=ret_val,
+            return_window_unit=ret_unit,
             created_at=getattr(order, "created_at", None),
             delivered_at=getattr(order, "delivered_at", None),
             customer_whatsapp_url=customer_whatsapp_url,
@@ -1094,20 +1182,62 @@ class CustomerService:
     def _format_ticket_response(self, ticket) -> SupportTicketResponse:
         created_date = ticket.created_at.strftime("%Y-%m-%d") if ticket.created_at else datetime.now().strftime("%Y-%m-%d")
         ord_id = getattr(ticket, "order_id", None)
+        photo = getattr(ticket, "photo_url", None)
+        ret_req_id = getattr(ticket, "return_request_id", None)
+        admin_notes = getattr(ticket, "admin_notes", None)
+
+        ord_obj = getattr(ticket, "order", None)
+        cust_obj = getattr(ticket, "customer", None)
+        ord_amount = float(ord_obj.total) if ord_obj and getattr(ord_obj, "total", None) is not None else None
+        pay_method = str(ord_obj.payment_method) if ord_obj and getattr(ord_obj, "payment_method", None) else None
+        deliv_addr = getattr(ord_obj, "shipping_address", None) if ord_obj else None
+        deliv_at = ord_obj.delivered_at.isoformat() if ord_obj and getattr(ord_obj, "delivered_at", None) else None
+        ret_reason = getattr(ord_obj, "return_reason", None) if ord_obj else None
+
+        cust_email = getattr(cust_obj, "email", None) if cust_obj else None
+        cust_phone = getattr(cust_obj, "phone", None) if cust_obj else None
+        assigned_adm = getattr(ticket, "assigned_admin", None)
+        created_at_str = ticket.created_at.isoformat() if getattr(ticket, "created_at", None) else None
+        updated_at_str = ticket.updated_at.isoformat() if getattr(ticket, "updated_at", None) else None
 
         return SupportTicketResponse(
             id=ticket.id,
             customerId=ticket.customer_id,
             customerName=ticket.customer_name,
+            customer_email=cust_email,
+            customerEmail=cust_email,
+            customer_phone=cust_phone,
+            customerPhone=cust_phone,
             category=ticket.category,
             description=ticket.description,
             status=ticket.status,
             orderId=ord_id,
             order_id=ord_id,
-            adminNotes=None,
+            adminNotes=admin_notes,
             customerResolutionFeedback=ticket.customer_resolution_feedback,
             date=created_date,
             notified=ticket.notified,
+            photo_url=photo,
+            photoUrl=photo,
+            return_request_id=ret_req_id,
+            returnRequestId=ret_req_id,
+            order_amount=ord_amount,
+            orderAmount=ord_amount,
+            payment_method=pay_method,
+            paymentMethod=pay_method,
+            delivery_address=deliv_addr,
+            deliveryAddress=deliv_addr,
+            delivered_at=deliv_at,
+            deliveredAt=deliv_at,
+            return_reason=ret_reason,
+            returnReason=ret_reason,
+            currency="₹",
+            assigned_admin=assigned_adm,
+            assignedAdmin=assigned_adm,
+            created_at=created_at_str,
+            createdAt=created_at_str,
+            updated_at=updated_at_str,
+            updatedAt=updated_at_str,
         )
 
     # ==========================================================

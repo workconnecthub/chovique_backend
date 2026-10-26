@@ -79,59 +79,10 @@ class TestGoogleServiceAudienceValidation:
 
 class TestGoogleAuthEndpoint:
 
-    async def test_google_login_invalid_token_returns_400(self, client: AsyncClient, monkeypatch):
-        """POST /api/v1/auth/google returns 400 when token verification fails."""
-        monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
-
-        with patch("app.services.google_service.GoogleService.verify_google_token", return_value=None):
-            response = await client.post(
-                "/api/v1/auth/google",
-                json={"id_token": "invalid-or-untrusted-token"},
-            )
-            assert response.status_code == 400
-            assert "Invalid Google token" in response.json()["detail"]
-
-    async def test_google_login_unverified_email_returns_400(self, client: AsyncClient, monkeypatch):
-        """POST /api/v1/auth/google returns 400 when Google reports email_verified=False."""
-        monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
-
-        mock_user = {
-            "google_id": "google-user-999",
-            "email": "unverified@example.com",
-            "full_name": "Unverified User",
-            "avatar_url": None,
-            "email_verified": False,
-        }
-
-        with patch("app.services.google_service.GoogleService.verify_google_token", return_value=mock_user):
-            response = await client.post(
-                "/api/v1/auth/google",
-                json={"id_token": "unverified-email-token"},
-            )
-            assert response.status_code == 400
-            assert "Google account email must be verified" in response.json()["detail"]
-
-    async def test_google_login_success_creates_user_and_sets_cookies(self, client: AsyncClient, monkeypatch):
-        """POST /api/v1/auth/google successfully logs in / registers user on valid Google ID token."""
-        monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
-
-        mock_user = {
-            "google_id": "google-user-777888",
-            "email": "verified_google_user@example.com",
-            "full_name": "Verified Google User",
-            "avatar_url": "https://lh3.googleusercontent.com/photo.jpg",
-            "email_verified": True,
-        }
-
-        with patch("app.services.google_service.GoogleService.verify_google_token", return_value=mock_user):
-            response = await client.post(
-                "/api/v1/auth/google",
-                json={"id_token": "valid-trusted-token"},
-            )
-            assert response.status_code == 200
-            data = response.json()
-            assert data["message"] == "Login successful."
-            assert data["user"]["email"] == "verified_google_user@example.com"
-            assert "access_token" in response.cookies
-            assert "refresh_token" in response.cookies
-            assert "csrf_token" in response.cookies
+    async def test_google_login_endpoint_removed_returns_404(self, client: AsyncClient):
+        """POST /api/v1/auth/google returns 404 because Google login endpoint has been safely removed."""
+        response = await client.post(
+            "/api/v1/auth/google",
+            json={"id_token": "some-token"},
+        )
+        assert response.status_code == 404

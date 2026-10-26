@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel, ConfigDict
 from app.schemas.product import ProductResponse
 
@@ -91,6 +91,13 @@ class OrderResponse(BaseModel):
     customer_phone: Optional[str] = None
     is_cancellable: bool = False
     is_returnable: bool = False
+    return_deadline: Optional[datetime] = None
+    return_window_expired: bool = False
+    return_request: Optional[Any] = None
+    return_requests_enabled: bool = True
+    return_photo_required: bool = False
+    return_window_value: int = 30
+    return_window_unit: str = "minutes"
     created_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     customer_whatsapp_url: Optional[str] = None

@@ -15,6 +15,12 @@ CSRF_EXEMPT_PATHS = {
     "/api/v1/auth/resend-forgot-otp",
     "/api/v1/auth/reset-password",
     "/api/v1/auth/refresh",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/customer/send-otp",
+    "/api/v1/auth/customer/resend-otp",
+    "/api/v1/auth/customer/verify-otp",
+    "/api/v1/auth/staff/check-mobile",
+    "/api/v1/auth/staff/login",
     "/api/v1/coupons/validate",
     "/api/v1/shipping/calculate",
     "/api/v1/checkout/initiate",
@@ -34,10 +40,12 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             raw_path = request.url.path
             normalized_path = raw_path.rstrip("/") if raw_path != "/" else "/"
 
-            # Skip CSRF check for exempt endpoints, webhooks, and admin/superadmin routes (role-protected)
+            # Skip CSRF check for exempt endpoints, webhooks, auth, and admin/superadmin routes
             if (
                 raw_path not in CSRF_EXEMPT_PATHS
                 and normalized_path not in CSRF_EXEMPT_PATHS
+                and not raw_path.startswith("/api/v1/auth")
+                and not normalized_path.startswith("/api/v1/auth")
                 and not raw_path.startswith("/api/v1/webhooks")
                 and not normalized_path.startswith("/api/v1/webhooks")
                 and not raw_path.startswith("/api/v1/admin")

@@ -90,10 +90,13 @@ class AdminDashboardService:
         )
         total_customers = int(cust_res.scalar() or 0)
 
-        # 3. Total reward coins issued using SQL sum
+        # 3. Total reward coins issued to customers using SQL sum
         coins_res = await self.db.execute(
-            select(func.coalesce(func.sum(CoinTransaction.coins), 0)).where(
-                CoinTransaction.type.in_(["EARN", "ADJUSTMENT"])
+            select(func.coalesce(func.sum(CoinTransaction.coins), 0))
+            .join(User, CoinTransaction.user_id == User.id)
+            .where(
+                User.role == "customer",
+                CoinTransaction.type.in_(["EARN", "WELCOME", "FIRST_ORDER_BONUS", "ACCOUNT_CREATION", "ADJUSTMENT"]),
             )
         )
         reward_coins_issued = int(coins_res.scalar() or 0)
@@ -185,15 +188,21 @@ class AdminDashboardService:
 
     async def get_reward_coin_stats(self) -> RewardCoinStatsResponse:
         earned_res = await self.db.execute(
-            select(func.coalesce(func.sum(CoinTransaction.coins), 0)).where(
-                CoinTransaction.type == "EARN"
+            select(func.coalesce(func.sum(CoinTransaction.coins), 0))
+            .join(User, CoinTransaction.user_id == User.id)
+            .where(
+                User.role == "customer",
+                CoinTransaction.type.in_(["EARN", "WELCOME", "FIRST_ORDER_BONUS", "ACCOUNT_CREATION"]),
             )
         )
         total_earned = int(earned_res.scalar() or 0)
 
         redeemed_res = await self.db.execute(
-            select(func.coalesce(func.sum(CoinTransaction.coins), 0)).where(
-                CoinTransaction.type == "REDEEM"
+            select(func.coalesce(func.sum(func.abs(CoinTransaction.coins)), 0))
+            .join(User, CoinTransaction.user_id == User.id)
+            .where(
+                User.role == "customer",
+                CoinTransaction.type.in_(["REDEEM", "COIN_REDEMPTION"]),
             )
         )
         total_redeemed = int(redeemed_res.scalar() or 0)
@@ -201,7 +210,9 @@ class AdminDashboardService:
         total_issued = total_earned
 
         active_res = await self.db.execute(
-            select(func.count(UserWallet.user_id)).where(UserWallet.coin_balance > 0)
+            select(func.count(UserWallet.user_id))
+            .join(User, UserWallet.user_id == User.id)
+            .where(User.role == "customer", UserWallet.coin_balance > 0)
         )
         active_holders = int(active_res.scalar() or 0)
 

@@ -203,8 +203,18 @@ class Settings(BaseSettings):
 
     OTP_EXPIRE_SECONDS: int = 300
     MAX_OTP_ATTEMPTS: int = 3
-    MAX_OTP_RESEND_ATTEMPTS: int = 3
+    MAX_OTP_RESEND_ATTEMPTS: int = 5
     OTP_RESEND_LOCKOUT_SECONDS: int = 600
+
+    # =========================================================
+    # MSG91 OTP INTEGRATION
+    # =========================================================
+    MSG91_AUTH_KEY: str = ""
+    MSG91_OTP_TEMPLATE_ID: str = ""
+    MSG91_SENDER_ID: str = "CHOVIQ"
+    MSG91_OTP_EXPIRY_MINUTES: int = 5
+    MSG91_OTP_LENGTH: int = 6
+    MSG91_API_URL: str = "https://control.msg91.com/api/v5/otp"
 
     @field_validator("OTP_EXPIRE_SECONDS", mode="before")
     @classmethod
@@ -378,6 +388,16 @@ class Settings(BaseSettings):
             "SUPERADMIN_PASSWORD",
             "SUPER_ADMIN_PASSWORD",
         )
+    )
+
+    SUPERADMIN_PHONE: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SUPERADMIN_PHONE",
+            "SUPER_ADMIN_PHONE",
+            "SUPERADMIN_MOBILE",
+            "SUPER_ADMIN_MOBILE",
+        ),
     )
 
     # =========================================================

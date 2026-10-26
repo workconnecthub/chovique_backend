@@ -7,12 +7,11 @@ from pydantic import BaseModel, EmailStr, Field, validator
 def validate_indian_phone(v: Optional[str]) -> Optional[str]:
     if not v:
         return v
-    cleaned = re.sub(r"[\s\-\(\)\+]", "", v)
-    if cleaned.startswith("91") and len(cleaned) == 12:
-        cleaned = cleaned[2:]
-    if len(cleaned) == 10 and cleaned[0] in "6789" and cleaned.isdigit():
-        return f"+91 {cleaned[:5]} {cleaned[5:]}"
-    raise ValueError("Invalid Indian phone number. Must be a 10-digit number starting with 6, 7, 8, or 9.")
+    from app.integrations.msg91 import normalize_phone
+    try:
+        return normalize_phone(v, default_country_code="+91")
+    except Exception:
+        raise ValueError("Invalid Indian phone number. Must be a 10-digit number starting with 6, 7, 8, or 9.")
 
 
 def validate_strong_password(v: str) -> str:

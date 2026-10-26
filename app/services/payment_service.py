@@ -120,26 +120,32 @@ class PaymentService:
                             "Insufficient stock during payment finalization for product %s", item.product_id
                         )
 
-            # Wallet rewards (Redeem used & Earn new)
+            # Wallet rewards (Redeem used & Earn new - strictly customers only)
             try:
-                from app.services.wallet_service import WalletService
-                wallet_service = WalletService(self.db)
+                from app.models.user import User
+                pay_user = await self.db.get(User, payment.user_id)
+                if pay_user and pay_user.role == "customer":
+                    from app.services.wallet_service import WalletService
+                    wallet_service = WalletService(self.db)
 
-                if getattr(order, "coins_used", 0) and order.coins_used > 0:
-                    await wallet_service.redeem_coins(
+                    if getattr(order, "coins_used", 0) and order.coins_used > 0:
+                        await wallet_service.redeem_coins(
+                            user_id=payment.user_id,
+                            order_id=order.id,
+                            coins=order.coins_used,
+                            commit=False,
+                        )
+
+                    coins_earned, _ = await wallet_service.earn_coins(
                         user_id=payment.user_id,
                         order_id=order.id,
-                        coins=order.coins_used,
+                        payable_amount=order.total,
                         commit=False,
                     )
-
-                coins_earned, _ = await wallet_service.earn_coins(
-                    user_id=payment.user_id,
-                    order_id=order.id,
-                    payable_amount=order.total,
-                    commit=False,
-                )
-                order.coins_earned = coins_earned
+                    order.coins_earned = coins_earned
+                else:
+                    order.coins_used = 0
+                    order.coins_earned = 0
             except Exception as exc:
                 logger.error("Failed to process wallet rewards during finalization: %s", exc)
 

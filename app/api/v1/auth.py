@@ -11,28 +11,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.services.auth_service import AuthService
 from app.schemas.auth import (
-    RegisterRequest,
-    VerifyOTPRequest,
-    LoginRequest,
-    GoogleLoginRequest,
-    SetPasswordRequest,
     ForgotPasswordRequest,
-    ResendOTPRequest,
     ResetPasswordRequest,
     ChangePasswordRequest,
     ResendForgotOTPRequest,
     UpdatePasswordSendOTPRequest,
     UpdatePasswordVerifyOTPRequest,
     UpdatePasswordRequest,
-    OTPSentResponse,
     AuthUserResponse,
     RefreshTokenRequest,
     RefreshTokenResponse,
     ForgotPasswordResponse,
+    CustomerSendOTPRequest,
+    CustomerSendOTPResponse,
+    CustomerResendOTPRequest,
+    CustomerVerifyOTPRequest,
+    StaffCheckMobileRequest,
+    StaffCheckMobileResponse,
+    StaffLoginRequest,
+    StaffForgotPasswordRequest,
+    IdentifyRequest,
+    IdentifyResponse,
 )
 from app.schemas.token import MessageResponse
 from app.schemas.user import UserResponse
-from app.api.deps import get_current_user_id, _extract_token
+from app.api.deps import get_current_user_id, get_current_user, _extract_token
+from app.models.user import User
 from app.middleware.rate_limit_middleware import RateLimiter
 from app.core.config import settings
 from app.core.exceptions import (
@@ -174,195 +178,188 @@ def get_csrf_token(response: Response):
 
 
 # ======================================================
-# REGISTER
+# UNIFIED LOGIN IDENTIFY ENDPOINT
 # ======================================================
 
-@router.post("/register", response_model=OTPSentResponse, dependencies=[Depends(RateLimiter(times=5, seconds=60))])
-async def register( request: RegisterRequest, db: AsyncSession = Depends(get_db),):
-
-    try:
-        service = AuthService(db)
-        return await service.register(
-            request
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-
-# ======================================================
-# RESEND OTP (Registration)
-# ======================================================
-
-@router.post( "/resend-otp", response_model=OTPSentResponse, dependencies=[Depends(RateLimiter(times=3, seconds=60))])
-async def resend_otp(
-    request: ResendOTPRequest,
+@router.post(
+    "/identify",
+    response_model=IdentifyResponse,
+    summary="Validate mobile number and determine next authentication step (OTP or Password)",
+    dependencies=[Depends(RateLimiter(times=15, seconds=60))],
+)
+async def identify_mobile(
+    request: IdentifyRequest,
     db: AsyncSession = Depends(get_db),
 ):
-
     try:
         service = AuthService(db)
-        return await service.resend_otp(
-            request.email
-        )
+        mobile = request.mobile_number or request.phone
+        country_code = request.country_code or "+91"
+        return await service.identify_mobile(mobile, country_code=country_code)
+    except (InvalidOTPError, OTPExpiredError, MaxAttemptsExceededError) as e:
+        _handle_otp_exception(e)
+    except HTTPException:
+        raise
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error("Error identifying mobile number: %s", e)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to process mobile number.")
+
 
 # ======================================================
-# VERIFY OTP (Registration)
+# CUSTOMER OTP AUTHENTICATION
 # ======================================================
 
-@router.post( "/verify-otp", response_model=AuthUserResponse, dependencies=[Depends(RateLimiter(times=10, seconds=60))])
-async def verify_otp(
-    request: VerifyOTPRequest,
+@router.post(
+    "/customer/send-otp",
+    response_model=CustomerSendOTPResponse,
+    summary="Send OTP to customer mobile number",
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
+)
+async def customer_send_otp(
+    request: CustomerSendOTPRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        service = AuthService(db)
+        return await service.customer_send_otp(request.phone)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error("Error sending customer OTP: %s", e)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send OTP.")
+
+
+@router.post(
+    "/customer/resend-otp",
+    response_model=CustomerSendOTPResponse,
+    summary="Resend OTP to customer mobile number",
+    dependencies=[Depends(RateLimiter(times=3, seconds=60))],
+)
+async def customer_resend_otp(
+    request: CustomerResendOTPRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        service = AuthService(db)
+        return await service.customer_resend_otp(request.phone)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error("Error resending customer OTP: %s", e)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to resend OTP.")
+
+
+@router.post(
+    "/customer/verify-otp",
+    response_model=AuthUserResponse,
+    summary="Verify customer OTP and login or auto-create account",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
+async def customer_verify_otp(
+    request: CustomerVerifyOTPRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     try:
         service = AuthService(db)
-        result = await service.verify_registration_otp(
-            email=request.email,
-            otp=request.otp,
-            full_name=request.full_name,
-            password=request.password,
-        )
-        # Set JWT Cookies
+        result = await service.customer_verify_otp(phone=request.phone, otp=request.otp)
         set_auth_cookies(
             response,
             result["access_token"],
             result["refresh_token"],
         )
-
         return {
-            "message":
-            result["message"],
-            "user":
-            UserResponse.from_orm_user(result["user"]),
+            "message": result["message"],
+            "user": UserResponse.from_orm_user(result["user"]),
             "access_token": result["access_token"],
             "refresh_token": result["refresh_token"],
         }
     except (InvalidOTPError, OTPExpiredError, MaxAttemptsExceededError) as e:
         _handle_otp_exception(e)
+    except HTTPException:
+        raise
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 # ======================================================
-# LOGIN
+# STAFF AUTHENTICATION
 # ======================================================
 
-@router.post("/login", response_model=AuthUserResponse, dependencies=[Depends(RateLimiter(times=5, seconds=60))])
-async def login(
-    request: LoginRequest,
+@router.post(
+    "/staff/check-mobile",
+    response_model=StaffCheckMobileResponse,
+    summary="Validate staff mobile number and role",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
+async def staff_check_mobile(
+    request: StaffCheckMobileRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        service = AuthService(db)
+        return await service.staff_check_mobile(phone=request.phone, role=request.role)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post(
+    "/staff/login",
+    response_model=AuthUserResponse,
+    summary="Staff password login with role and mobile number verification",
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
+)
+async def staff_login(
+    request: StaffLoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-
     try:
         service = AuthService(db)
-        result = await service.login(
-            request
+        result = await service.staff_login(
+            phone=request.phone or request.mobile_number,
+            password=request.password,
+            role=request.role,
         )
-        # Set JWT Cookies
         set_auth_cookies(
             response,
             result["access_token"],
             result["refresh_token"],
         )
         return {
-            "message":
-            result["message"],
+            "message": result["message"],
             "user": UserResponse.from_orm_user(result["user"]),
             "access_token": result["access_token"],
             "refresh_token": result["refresh_token"],
         }
-
+    except HTTPException:
+        raise
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+
 
 # ======================================================
-# GOOGLE LOGIN
+# CURRENT AUTHENTICATED USER
 # ======================================================
 
-@router.post("/google", summary="Google OAuth login / registration", response_model=AuthUserResponse, dependencies=[Depends(RateLimiter(times=10, seconds=60))])
-async def google_login(
-    request: GoogleLoginRequest,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
+@router.get(
+    "/me",
+    response_model=UserResponse,
+    summary="Get currently authenticated user's profile",
+)
+async def get_auth_me(
+    current_user: User = Depends(get_current_user),
 ):
+    return UserResponse.from_orm_user(current_user)
 
-    try:
-        service = AuthService(db)
-        result = await service.google_login(
-            request.id_token
-        )
-        set_auth_cookies(
-            response,
-            result["access_token"],
-            result["refresh_token"],
-        )
-        return {
-            "message":
-            result["message"],
-            "user":
-            UserResponse.from_orm_user(result["user"]),
-            "access_token": result["access_token"],
-            "refresh_token": result["refresh_token"],
-        }
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-
-# ======================================================
-# SET PASSWORD
-# ======================================================
-
-@router.post("/set-password", response_model=AuthUserResponse, dependencies=[Depends(RateLimiter(times=5, seconds=60))])
-async def set_password(
-    request: SetPasswordRequest,
-    response: Response,
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
-):
-
-    try:
-        service = AuthService(db)
-        result = await service.set_password(
-            user_id=user_id,
-            password=request.password,
-            confirm_password=request.confirm_password,
-        )
-        set_auth_cookies(
-            response,
-            result["access_token"],
-            result["refresh_token"],
-        )
-        return {
-            "message":
-            result["message"],
-            "user":
-            UserResponse.from_orm_user(result["user"]),
-            "access_token": result["access_token"],
-            "refresh_token": result["refresh_token"],
-        }
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
 
 # ======================================================
 # FORGOT PASSWORD
@@ -373,11 +370,11 @@ async def forgot_password(
     request: ForgotPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ):
-
     try:
         service = AuthService(db)
         return await service.forgot_password(
-            request.email
+            email=request.email,
+            phone=request.phone,
         )
     except ValueError as e:
         raise HTTPException(
@@ -395,11 +392,11 @@ async def resend_forgot_password_otp(
     request: ResendForgotOTPRequest,
     db: AsyncSession = Depends(get_db),
 ):
-
     try:
         service = AuthService(db)
         return await service.resend_forgot_password_otp(
             email=request.email,
+            phone=request.phone,
         )
     except ValueError as e:
         raise HTTPException(
@@ -416,11 +413,11 @@ async def reset_password(
     request: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ):
-
     try:
         service = AuthService(db)
         return await service.reset_password(
             email=request.email,
+            phone=request.phone,
             otp=request.otp,
             password=request.password,
             confirm_password=request.confirm_password,

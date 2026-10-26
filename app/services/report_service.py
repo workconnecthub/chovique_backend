@@ -585,11 +585,25 @@ class ReportService:
     async def _generate_reward_coins_report(
         self, start_dt: datetime, end_dt: datetime, req: ReportQueryRequest
     ) -> ReportResponse:
-        earned_q = select(func.coalesce(func.sum(CoinTransaction.coins), 0)).where(
-            CoinTransaction.created_at >= start_dt, CoinTransaction.created_at <= end_dt, CoinTransaction.type == "EARN"
+        earned_q = (
+            select(func.coalesce(func.sum(CoinTransaction.coins), 0))
+            .join(User, CoinTransaction.user_id == User.id)
+            .where(
+                User.role == "customer",
+                CoinTransaction.created_at >= start_dt,
+                CoinTransaction.created_at <= end_dt,
+                CoinTransaction.type.in_(["EARN", "WELCOME", "FIRST_ORDER_BONUS", "ACCOUNT_CREATION"]),
+            )
         )
-        redeemed_q = select(func.coalesce(func.sum(func.abs(CoinTransaction.coins)), 0)).where(
-            CoinTransaction.created_at >= start_dt, CoinTransaction.created_at <= end_dt, CoinTransaction.type == "REDEEM"
+        redeemed_q = (
+            select(func.coalesce(func.sum(func.abs(CoinTransaction.coins)), 0))
+            .join(User, CoinTransaction.user_id == User.id)
+            .where(
+                User.role == "customer",
+                CoinTransaction.created_at >= start_dt,
+                CoinTransaction.created_at <= end_dt,
+                CoinTransaction.type.in_(["REDEEM", "COIN_REDEMPTION"]),
+            )
         )
         earned_coins = int((await self.db.execute(earned_q)).scalar() or 0)
         redeemed_coins = int((await self.db.execute(redeemed_q)).scalar() or 0)
@@ -597,8 +611,12 @@ class ReportService:
 
         query = (
             select(CoinTransaction, User)
-            .outerjoin(User, CoinTransaction.user_id == User.id)
-            .where(CoinTransaction.created_at >= start_dt, CoinTransaction.created_at <= end_dt)
+            .join(User, CoinTransaction.user_id == User.id)
+            .where(
+                User.role == "customer",
+                CoinTransaction.created_at >= start_dt,
+                CoinTransaction.created_at <= end_dt,
+            )
             .order_by(CoinTransaction.created_at.desc())
         )
 

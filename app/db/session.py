@@ -40,6 +40,7 @@ from app.models.theme import ThemePreset  # noqa: F401
 from app.models.wallet import UserWallet, CoinTransaction  # noqa: F401
 from app.models.store_location import StoreLocation  # noqa: F401
 from app.models.delivery_service_area import DeliveryServiceArea  # noqa: F401
+from app.models.otp_challenge import OTPChallenge  # noqa: F401
 # ==========================================================
 # Create Async Engine
 # ==========================================================
@@ -132,6 +133,11 @@ async def init_db() -> None:
             "ALTER TABLE notifications ALTER COLUMN text DROP NOT NULL;",
             # Users
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS address TEXT;",
+            "ALTER TABLE users ALTER COLUMN email DROP NOT NULL;",
+            "ALTER TABLE users ALTER COLUMN full_name DROP NOT NULL;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_phone_verified BOOLEAN NOT NULL DEFAULT FALSE;",
+            "CREATE INDEX IF NOT EXISTS ix_users_phone ON users (phone);",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_customer_phone ON users (phone) WHERE phone IS NOT NULL AND role = 'customer';",
             # Offline Sales
             "ALTER TABLE offline_sales ADD COLUMN IF NOT EXISTS receipt_id VARCHAR(100);",
             "ALTER TABLE offline_sales ADD COLUMN IF NOT EXISTS company_name VARCHAR(255) DEFAULT 'Direct Customer';",

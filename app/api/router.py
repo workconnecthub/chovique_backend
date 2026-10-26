@@ -37,6 +37,7 @@ from app.api.v1 import (
     media_proxy,
     shipping,
     superadmin_logistics,
+    returns,
 )
 from app.core.config import settings
 
@@ -57,6 +58,8 @@ api_router.include_router(orders.router)
 api_router.include_router(shipping.router)
 api_router.include_router(webhooks.router)
 api_router.include_router(refunds.router)
+api_router.include_router(returns.router)
+api_router.include_router(returns.admin_router)
 api_router.include_router(tickets.router)
 api_router.include_router(coupons.router)
 api_router.include_router(contact.router)

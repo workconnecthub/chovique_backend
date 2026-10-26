@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.db.base import Base
+import app.models  # Ensure all models are registered with Base.metadata
 from app.db.session import get_db
 from app.main import app
 
@@ -32,17 +33,22 @@ def event_loop():
 
 
 # ==========================================================
-# Test Database Engine (SQLite in-memory)
+# ==========================================================
+# Test Database Engine (PostgreSQL isolated test DB)
 # ==========================================================
 
-from sqlalchemy.pool import StaticPool
+import os
+from sqlalchemy import text
+from sqlalchemy.pool import NullPool
 
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+TEST_DATABASE_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:chukki12@localhost:5433/chovique_test_db",
+)
 
 test_engine = create_async_engine(
     TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+    poolclass=NullPool,
     echo=False,
 )
 
@@ -60,15 +66,42 @@ TestSessionLocal = async_sessionmaker(
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_database():
-    """Create tables before each test, drop after."""
+    """Create tables before each test and clean table data between tests."""
+    async with test_engine.connect() as conn:
+        autocommit_conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        for val in ["delivery_boy", "delivery_person", "super_admin"]:
+            try:
+                await autocommit_conn.execute(text(f"ALTER TYPE user_role ADD VALUE IF NOT EXISTS '{val}';"))
+            except Exception:
+                pass
 
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        for stmt in [
+            "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS photo_url VARCHAR(500);",
+            "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS return_request_id VARCHAR(36);",
+            "ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP WITH TIME ZONE;",
+            "ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS return_requests_enabled BOOLEAN NOT NULL DEFAULT TRUE;",
+            "ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS return_window_value INTEGER NOT NULL DEFAULT 30;",
+            "ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS return_window_unit VARCHAR(20) NOT NULL DEFAULT 'minutes';",
+            "ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS return_photo_required BOOLEAN NOT NULL DEFAULT FALSE;",
+            "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS assigned_admin VARCHAR(120);",
+            "ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE;",
+        ]:
+            try:
+                await conn.execute(text(stmt))
+            except Exception as e:
+                print(f"Warning running {stmt}: {e}")
 
     yield
 
+
     async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        for table in reversed(Base.metadata.sorted_tables):
+            try:
+                await conn.execute(text(f'TRUNCATE TABLE "{table.name}" CASCADE;'))
+            except Exception:
+                pass
 
 
 # ==========================================================
@@ -155,39 +188,35 @@ async def db_session():
 @pytest_asyncio.fixture
 async def authenticated_client(client: AsyncClient, mock_redis):
     """
-    Returns an AsyncClient with auth cookies set after
-    registering and verifying a test user.
+    Returns an AsyncClient with auth cookies and Bearer headers set
+    for a test customer user.
     """
+    import secrets
+    from app.models.user import User
+    from app.core.security import hash_password, create_access_token
 
-    # Register
-    await client.post(
-        "/api/v1/auth/register",
-        json={
-            "full_name": "Test User",
-            "email": "test@example.com",
-            "password": "TestPass123!",
-            "confirm_password": "TestPass123!",
-        },
-    )
+    csrf_token = secrets.token_hex(16)
+    async with TestSessionLocal() as session:
+        user = User(
+            email="test@example.com",
+            full_name="Test User",
+            phone="919999999999",
+            role="customer",
+            hashed_password=hash_password("TestPass123!"),
+            is_email_verified=True,
+            is_phone_verified=True,
+            is_active=True,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        user_id = str(user.id)
 
-    # Get OTP from mock Redis
-    otp = await mock_redis.get("otp:register:test@example.com")
-
-    # Verify OTP
-    response = await client.post(
-        "/api/v1/auth/verify-otp",
-        json={
-            "email": "test@example.com",
-            "otp": otp,
-            "full_name": "Test User",
-            "password": "TestPass123!",
-        },
-    )
-
-    assert response.status_code == 200
-    csrf = response.cookies.get("csrf_token")
-    if csrf:
-        client.headers["x-csrf-token"] = csrf
-
-    # The cookies are set on the client automatically
+    access_token = create_access_token(user_id)
+    client.cookies.set("access_token", access_token)
+    client.cookies.set("csrf_token", csrf_token)
+    client.headers["Authorization"] = f"Bearer {access_token}"
+    client.headers["x-csrf-token"] = csrf_token
+    setattr(client, "user_id", user_id)
     yield client
+

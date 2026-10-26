@@ -34,7 +34,20 @@ class WalletRepository:
         description: Optional[str] = None,
         order_id: Optional[str] = None,
         commit: bool = False,
-    ) -> CoinTransaction:
+    ) -> Optional[CoinTransaction]:
+        from app.models.user import User
+        user = await self.db.get(User, user_id)
+        if user and user.role != "customer":
+            # Staff accounts must never earn, redeem, or receive customer reward coins
+            # Only reversals/adjustments are permitted for staff to clean up invalid balances
+            if transaction_type.upper() not in ("COIN_REVERSAL", "REVERSAL", "ADJUSTMENT"):
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Rejected %s reward transaction for non-customer user %s (role: %s). Rewards are customer-only.",
+                    transaction_type, user_id, user.role
+                )
+                return None
+
         wallet = await self.get_or_create_wallet(user_id)
         
         # Update balance safely

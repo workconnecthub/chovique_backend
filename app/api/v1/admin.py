@@ -426,7 +426,11 @@ async def get_admin_coin_transactions(
     delay_hours = getattr(settings, "credit_delay_hours", 24) or 24
     now_utc = datetime.now(timezone.utc)
 
-    query = select(CoinTransaction, User).outerjoin(User, CoinTransaction.user_id == User.id)
+    query = (
+        select(CoinTransaction, User)
+        .join(User, CoinTransaction.user_id == User.id)
+        .where(User.role == "customer")
+    )
     if type_filter and type_filter.upper() != "ALL":
         query = query.where(CoinTransaction.type == type_filter.upper())
     query = query.order_by(CoinTransaction.created_at.desc()).limit(200)

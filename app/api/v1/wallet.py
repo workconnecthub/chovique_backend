@@ -20,6 +20,11 @@ async def get_wallet(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if current_user.role != "customer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Reward coins and wallet features are available exclusively to customer accounts.",
+        )
     service = WalletService(db)
     return await service.get_user_wallet_details(current_user.id)
 
@@ -33,6 +38,11 @@ async def get_transactions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if current_user.role != "customer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Reward coins and wallet features are available exclusively to customer accounts.",
+        )
     service = WalletService(db)
     calc_offset = offset if offset is not None else (page - 1) * limit
     txs = await service.wallet_repo.get_transactions(current_user.id, type_filter=type, limit=limit, offset=calc_offset)
@@ -54,14 +64,14 @@ async def get_transactions(
         is_welcome = t_type in ("WELCOME", "WELCOME_BONUS", "ACCOUNT_CREATION") or "welcome" in (t.description or "").lower()
         is_order_earn = (t_type in ("EARN", "ORDER_REWARD", "FIRST_ORDER_BONUS") or bool(t.order_id)) and not is_welcome
 
-        status = "AVAILABLE"
+        status_text = "AVAILABLE"
         is_pending = False
         unlocks_at = None
 
         if is_order_earn and t_dt:
             target_unlock = t_dt + timedelta(hours=delay_hours)
             if now_utc < target_unlock:
-                status = "PENDING"
+                status_text = "PENDING"
                 is_pending = True
                 unlocks_at = target_unlock
 
@@ -74,7 +84,7 @@ async def get_transactions(
                 coins=t.coins,
                 description=t.description,
                 created_at=t.created_at,
-                status=status,
+                status=status_text,
                 is_pending=is_pending,
                 unlocks_at=unlocks_at,
                 delay_hours=delay_hours,
@@ -96,6 +106,11 @@ async def calculate_redemption(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if current_user.role != "customer":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Reward coins and redemption are available exclusively to customer accounts.",
+        )
     service = WalletService(db)
     return await service.calculate_redemption(
         user_id=current_user.id,

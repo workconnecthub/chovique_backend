@@ -158,6 +158,11 @@ def require_role(*allowed_roles):
         else:
             roles_set.add(str(role).lower().strip())
 
+    if "superadmin" in roles_set or "super_admin" in roles_set:
+        roles_set.update(["superadmin", "super_admin"])
+    if "delivery_boy" in roles_set or "delivery_person" in roles_set:
+        roles_set.update(["delivery_boy", "delivery_person"])
+
     async def _check_role(
         current_user: User = Depends(get_current_user),
     ) -> User:

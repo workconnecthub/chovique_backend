@@ -41,6 +41,10 @@ class PlatformSettings(Base):
     order_cancellation_enabled = Column(Boolean, nullable=False, default=True)
     cancellation_time_limit = Column(Integer, nullable=False, default=24)    # hours
     return_refund_enabled = Column(Boolean, nullable=False, default=True)
+    return_requests_enabled = Column(Boolean, nullable=False, default=True)
+    return_window_value = Column(Integer, nullable=False, default=30)
+    return_window_unit = Column(String(20), nullable=False, default="minutes")  # minutes | hours | days
+    return_photo_required = Column(Boolean, nullable=False, default=False)
 
     # ── System & Security ──────────────────────────────────────────────────
     maintenance_mode = Column(Boolean, nullable=False, default=False)

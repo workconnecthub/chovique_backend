@@ -58,6 +58,25 @@ class WalletService:
 
     async def compute_user_coin_summary(self, user_id: str):
         from datetime import datetime, timezone, timedelta
+        from app.models.user import User
+
+        # Verify customer role: staff accounts (super_admin, admin, delivery_person) never hold reward coins
+        user = await self.db.get(User, user_id)
+        if not user or user.role != "customer":
+            wallet = await self.wallet_repo.get_or_create_wallet(user_id)
+            if wallet.coin_balance != 0:
+                wallet.coin_balance = 0
+                self.db.add(wallet)
+                await self.db.flush()
+            return {
+                "available_coins": 0,
+                "pending_coins": 0,
+                "total_earned": 0,
+                "total_redeemed": 0,
+                "total_returned": 0,
+                "total_reversed": 0,
+            }
+
         now_utc = datetime.now(timezone.utc)
         settings = await self.get_reward_settings()
         delay_hours = getattr(settings, "credit_delay_hours", 24) or 24
@@ -78,11 +97,28 @@ class WalletService:
                 t_dt = t_dt.replace(tzinfo=timezone.utc)
 
             is_welcome = t_type in ("WELCOME", "WELCOME_BONUS", "ACCOUNT_CREATION", "REGISTRATION_BONUS") or "welcome" in (t.description or "").lower()
-            is_order_earn = (t_type in ("EARN", "ORDER_REWARD", "FIRST_ORDER_BONUS") or bool(t.order_id)) and not is_welcome
+            is_redeem = t_type in ("REDEEM", "COIN_REDEMPTION") or (t.coins < 0 and t_type not in ("ADJUSTMENT", "REVERSAL", "COIN_REVERSAL"))
+            is_refund = t_type in ("REFUND", "RETURN", "COIN_RETURN")
+            is_reversal = t_type in ("ADJUSTMENT", "REVERSAL", "COIN_REVERSAL")
+            is_order_earn = (t_type in ("EARN", "ORDER_REWARD", "FIRST_ORDER_BONUS") or (bool(t.order_id) and t.coins > 0)) and not is_welcome
 
             if is_welcome:
                 if t.coins > 0:
                     earned += t.coins
+                available += t.coins
+            elif is_redeem:
+                if t.coins < 0:
+                    redeemed += abs(t.coins)
+                else:
+                    redeemed += t.coins
+                available += t.coins if t.coins < 0 else -t.coins
+            elif is_refund:
+                if t.coins > 0:
+                    returned += t.coins
+                available += t.coins
+            elif is_reversal:
+                if t.coins < 0:
+                    reversed_amt += abs(t.coins)
                 available += t.coins
             elif is_order_earn:
                 if t.coins > 0:
@@ -91,18 +127,6 @@ class WalletService:
                     pending += max(0, t.coins)
                 else:
                     available += t.coins
-            elif t_type in ("REFUND", "RETURN", "COIN_RETURN"):
-                if t.coins > 0:
-                    returned += t.coins
-                available += t.coins
-            elif t_type in ("REDEEM", "COIN_REDEMPTION"):
-                if t.coins < 0:
-                    redeemed += abs(t.coins)
-                available += t.coins
-            elif t_type in ("ADJUSTMENT", "REVERSAL", "COIN_REVERSAL"):
-                if t.coins < 0:
-                    reversed_amt += abs(t.coins)
-                available += t.coins
             else:
                 if t.coins > 0:
                     earned += t.coins
@@ -129,12 +153,23 @@ class WalletService:
 
     async def get_user_wallet_details(self, user_id: str) -> UserWalletResponse:
         from datetime import datetime, timezone, timedelta
+        from fastapi import HTTPException, status
+        from app.models.user import User
+
+        # Customer role verification: only customer accounts have wallet & rewards
+        user = await self.db.get(User, user_id)
+        if not user or user.role != "customer":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Reward coins and wallet features are available exclusively to customer accounts.",
+            )
+
         now_utc = datetime.now(timezone.utc)
         wallet = await self.wallet_repo.get_or_create_wallet(user_id)
         settings = await self.get_reward_settings()
         transactions = await self.wallet_repo.get_transactions(user_id, limit=50)
 
-        # Auto-grant 200 Welcome Coins for any registered customer who has no welcome bonus yet
+        # Auto-grant 200 Welcome Coins ONLY for registered customer who has no welcome bonus yet
         has_welcome = any(
             (t.type or "").upper() in ("WELCOME", "WELCOME_BONUS", "ACCOUNT_CREATION")
             or "welcome" in (t.description or "").lower()
@@ -210,6 +245,19 @@ class WalletService:
         coupon_discount: float = 0.0,
         coins_requested: int = 0,
     ) -> CalculateRedemptionResponse:
+        from app.models.user import User
+        user = await self.db.get(User, user_id)
+        if not user or user.role != "customer":
+            return CalculateRedemptionResponse(
+                user_balance=0,
+                coins_requested=coins_requested,
+                allowed_coins=0,
+                coin_discount=0.0,
+                max_usable_coins=0,
+                max_coin_discount=0.0,
+                message="Reward coin redemption is available exclusively to customer accounts.",
+            )
+
         settings = await self.get_reward_settings()
         summary = await self.compute_user_coin_summary(user_id)
         available_balance = summary["available_coins"]
@@ -272,6 +320,20 @@ class WalletService:
     ):
         if coins <= 0:
             return None
+
+        from app.models.user import User
+        user = await self.db.get(User, user_id)
+        if not user or user.role != "customer":
+            logger.warning("Staff user %s (role: %s) attempted to redeem coins.", user_id, getattr(user, 'role', 'unknown'))
+            raise ValueError("Only customer accounts are eligible to redeem reward coins.")
+
+        if order_id:
+            from app.models.order import Order
+            order = await self.db.get(Order, order_id)
+            if order and str(order.user_id) != str(user_id):
+                logger.warning("Order %s does not belong to user %s for coin redemption.", order_id, user_id)
+                raise ValueError("Order does not belong to the user attempting redemption.")
+
         tx = await self.wallet_repo.add_transaction(
             user_id=user_id,
             transaction_type="REDEEM",
@@ -311,9 +373,28 @@ class WalletService:
         if not settings.reward_system_enabled:
             return 0, []
 
+        from app.models.user import User
+        user = await self.db.get(User, user_id)
+        if not user or user.role != "customer":
+            logger.info("User %s (role: %s) is not an eligible customer to earn coins.", user_id, getattr(user, 'role', 'unknown'))
+            return 0, []
+
         from app.models.order import Order
         from app.models.wallet import CoinTransaction
         from sqlalchemy import select, func
+
+        # Verify that order belongs to this customer
+        if order_id:
+            order = await self.db.get(Order, order_id)
+            if order and str(order.user_id) != str(user_id):
+                logger.warning("Order %s does not belong to user %s for coin earning.", order_id, user_id)
+                return 0, []
+
+            # Idempotency check: don't double-award order reward on the same order
+            existing_order_txs = await self.wallet_repo.get_order_transactions(order_id)
+            if any(t.type in ("ORDER_REWARD", "EARN") for t in existing_order_txs):
+                logger.info("Order %s has already received order reward coins.", order_id)
+                return 0, []
 
         # Check existing non-cancelled orders for user (excluding current order)
         order_count = await self.db.scalar(
@@ -397,11 +478,25 @@ class WalletService:
         coins_earned: int,
         commit: bool = False,
     ):
+        from app.models.user import User
+        user = await self.db.get(User, user_id)
+        if not user or user.role != "customer":
+            return (0, 0)
+
+        if order_id:
+            from app.models.order import Order
+            order = await self.db.get(Order, order_id)
+            if order and str(order.user_id) != str(user_id):
+                return (0, 0)
+
         # Prevent duplicate refund/reversal
         existing = await self.wallet_repo.get_order_transactions(order_id)
         has_refund = any(t.type in ("REFUND", "RETURN", "COIN_RETURN", "ADJUSTMENT", "REVERSAL", "COIN_REVERSAL") for t in existing)
         if has_refund:
-            return
+            return (0, 0)
+
+        returned = 0
+        reversed_coins = 0
 
         # Restore redeemed coins
         if coins_used > 0:
@@ -413,6 +508,7 @@ class WalletService:
                 order_id=order_id,
                 commit=commit,
             )
+            returned = coins_used
 
         # Reverse earned coins
         if coins_earned > 0:
@@ -424,5 +520,8 @@ class WalletService:
                 order_id=order_id,
                 commit=commit,
             )
+            reversed_coins = coins_earned
+
+        return (returned, reversed_coins)
 
 

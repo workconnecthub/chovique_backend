@@ -76,7 +76,38 @@ async def lifespan(app: FastAPI):
                     await autocommit_conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS admin_notes TEXT;"))
                     await autocommit_conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS customer_resolution_feedback VARCHAR(50);"))
                     await autocommit_conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT FALSE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS photo_url VARCHAR(500);"))
+                    await autocommit_conn.execute(text("ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS return_request_id VARCHAR(36);"))
+                    await autocommit_conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS return_requests (
+                            id VARCHAR(36) PRIMARY KEY,
+                            order_id VARCHAR(36) NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+                            ticket_id VARCHAR(36) REFERENCES support_tickets(id) ON DELETE SET NULL,
+                            customer_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                            customer_name VARCHAR(120) NOT NULL,
+                            customer_email VARCHAR(255),
+                            customer_phone VARCHAR(50),
+                            order_amount DOUBLE PRECISION NOT NULL,
+                            payment_method VARCHAR(100) NOT NULL,
+                            delivery_address JSON NOT NULL,
+                            delivered_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                            reason VARCHAR(100) NOT NULL,
+                            description TEXT NOT NULL,
+                            photo_url VARCHAR(500),
+                            status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+                            admin_notes TEXT,
+                            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                        );
+                    """))
+                    await autocommit_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_return_requests_order_id ON return_requests(order_id);"))
+                    await autocommit_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_return_requests_customer_id ON return_requests(customer_id);"))
                     await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP WITH TIME ZONE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS return_requests_enabled BOOLEAN NOT NULL DEFAULT TRUE;"))
+                    await autocommit_conn.execute(text("ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS return_window_value INTEGER NOT NULL DEFAULT 30;"))
+                    await autocommit_conn.execute(text("ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS return_window_unit VARCHAR(20) NOT NULL DEFAULT 'minutes';"))
+                    await autocommit_conn.execute(text("ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS return_photo_required BOOLEAN NOT NULL DEFAULT FALSE;"))
+
                     await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITH TIME ZONE;"))
                     await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancellation_reason TEXT;"))
                     await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP WITH TIME ZONE;"))
@@ -129,123 +160,17 @@ async def lifespan(app: FastAPI):
                     await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_rejected_at TIMESTAMP WITH TIME ZONE;"))
                     await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_rejection_reason TEXT;"))
                     await autocommit_conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_picked_at TIMESTAMP WITH TIME ZONE;"))
-                    # Add delivery_boy to the user_role enum if not present
-                    try:
-                        await autocommit_conn.execute(text("ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'delivery_boy';"))
-                    except Exception:
-                        pass
+                    # Add delivery_boy, delivery_person, super_admin to the user_role enum if not present
+                    for val in ["delivery_boy", "delivery_person", "super_admin"]:
+                        try:
+                            await autocommit_conn.execute(text(f"ALTER TYPE user_role ADD VALUE IF NOT EXISTS '{val}';"))
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.warning("Inner column migration note: %s", e)
 
     except Exception as e:
         logger.warning("Database migration note: %s", e)
-
-    # Seed default logistics configuration (Primary store & Local delivery service areas)
-    try:
-        from app.models.store_location import StoreLocation
-        from app.models.delivery_service_area import DeliveryServiceArea
-        from sqlalchemy import select
-
-        async with AsyncSessionLocal() as db:
-            # 1. Primary Store Location
-            store_res = await db.execute(select(StoreLocation).limit(1))
-            primary_store = store_res.scalars().first()
-            if not primary_store:
-                primary_store = StoreLocation(
-                    name="Chovique Flagship Store",
-                    house_number="Plot 42",
-                    street="Sector 1, MVP Colony",
-                    area="MVP Colony",
-                    city="Visakhapatnam",
-                    district="Visakhapatnam",
-                    state="Andhra Pradesh",
-                    pincode="530017",
-                    latitude=17.7412,
-                    longitude=83.3364,
-                    formatted_address="Plot 42, Sector 1, MVP Colony, Visakhapatnam, Andhra Pradesh 530017",
-                    phone="+91 891 2345678",
-                    is_primary=True,
-                    active=True,
-                )
-                db.add(primary_store)
-                await db.flush()
-                logger.info("Seeded primary store location: %s", primary_store.name)
-
-            # 2. Local Delivery Service Areas
-            area_res = await db.execute(select(DeliveryServiceArea).limit(1))
-            if not area_res.scalars().first():
-                default_areas = [
-                    DeliveryServiceArea(
-                        store_location_id=primary_store.id,
-                        pincode="530017",
-                        city="Visakhapatnam",
-                        district="Visakhapatnam",
-                        state="Andhra Pradesh",
-                        delivery_mode="LOCAL",
-                        delivery_charge=40.0,
-                        free_delivery_threshold=1000.0,
-                        same_day_available=True,
-                        estimated_delivery="Within 2-3 hours (Same Day)",
-                        active=True,
-                    ),
-                    DeliveryServiceArea(
-                        store_location_id=primary_store.id,
-                        pincode="530003",
-                        city="Visakhapatnam",
-                        district="Visakhapatnam",
-                        state="Andhra Pradesh",
-                        delivery_mode="LOCAL",
-                        delivery_charge=40.0,
-                        free_delivery_threshold=1000.0,
-                        same_day_available=True,
-                        estimated_delivery="Within 3-4 hours (Same Day)",
-                        active=True,
-                    ),
-                    DeliveryServiceArea(
-                        store_location_id=primary_store.id,
-                        pincode="530020",
-                        city="Visakhapatnam",
-                        district="Visakhapatnam",
-                        state="Andhra Pradesh",
-                        delivery_mode="LOCAL",
-                        delivery_charge=40.0,
-                        free_delivery_threshold=1000.0,
-                        same_day_available=True,
-                        estimated_delivery="Within 3-4 hours (Same Day)",
-                        active=True,
-                    ),
-                    DeliveryServiceArea(
-                        store_location_id=primary_store.id,
-                        pincode="530002",
-                        city="Visakhapatnam",
-                        district="Visakhapatnam",
-                        state="Andhra Pradesh",
-                        delivery_mode="LOCAL",
-                        delivery_charge=50.0,
-                        free_delivery_threshold=1200.0,
-                        same_day_available=True,
-                        estimated_delivery="Within 4-5 hours (Same Day)",
-                        active=True,
-                    ),
-                    DeliveryServiceArea(
-                        store_location_id=primary_store.id,
-                        pincode="530045",
-                        city="Visakhapatnam",
-                        district="Visakhapatnam",
-                        state="Andhra Pradesh",
-                        delivery_mode="LOCAL",
-                        delivery_charge=60.0,
-                        free_delivery_threshold=1500.0,
-                        same_day_available=True,
-                        estimated_delivery="Within 4-6 hours (Same Day)",
-                        active=True,
-                    ),
-                ]
-                db.add_all(default_areas)
-                logger.info("Seeded %d default local delivery service areas.", len(default_areas))
-    except Exception as e:
-        logger.warning("Logistics default seeding note: %s", e)
-
     # Seed superadmin user
     try:
         from app.services.superadmin_service import ensure_superadmin_exists

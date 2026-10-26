@@ -22,7 +22,7 @@ class UserRepository:
 
         await self.db.refresh(user)
 
-        if user.role != "admin" and user.role != "superadmin":
+        if user.role not in ("admin", "superadmin", "super_admin"):
             try:
                 from app.services.notification_service import NotificationService
                 await NotificationService(self.db).notify_new_customer(user.id, user.full_name or user.email)
@@ -42,6 +42,168 @@ class UserRepository:
         )
 
         return result.scalar_one_or_none()
+
+    # ==========================================================
+    # Get By Phone
+    # ==========================================================
+
+    @staticmethod
+    def _get_phone_lookup_variants(phone: str) -> list[str]:
+        if not phone:
+            return []
+        raw = str(phone).strip()
+        variants = {raw}
+        try:
+            from app.integrations.msg91 import parse_and_normalize_phone
+            e164, nat, _ = parse_and_normalize_phone(raw)
+            variants.add(e164)
+            variants.add(nat)
+            variants.add(e164.lstrip("+"))
+            if len(nat) == 10:
+                variants.add(f"0{nat}")
+                variants.add(f"+91 {nat[:5]} {nat[5:]}")
+                variants.add(f"+91 {nat}")
+                variants.add(f"{nat[:5]} {nat[5:]}")
+                variants.add(f"+91-{nat[:5]}-{nat[5:]}")
+                variants.add(f"+91-{nat}")
+                variants.add(f"{nat[:5]}-{nat[5:]}")
+        except Exception:
+            import re
+            clean_digits = re.sub(r"\D", "", raw)
+            if clean_digits:
+                variants.add(clean_digits)
+                nat = clean_digits[-10:]
+                variants.add(nat)
+                variants.add(f"+91{nat}")
+                variants.add(f"91{nat}")
+                variants.add(f"0{nat}")
+                if len(nat) == 10:
+                    variants.add(f"+91 {nat[:5]} {nat[5:]}")
+                    variants.add(f"+91 {nat}")
+                    variants.add(f"{nat[:5]} {nat[5:]}")
+                    variants.add(f"+91-{nat[:5]}-{nat[5:]}")
+                    variants.add(f"+91-{nat}")
+                    variants.add(f"{nat[:5]}-{nat[5:]}")
+        return list(variants)
+
+    @classmethod
+    def _build_phone_filter_conditions(cls, phone: str):
+        from sqlalchemy import or_, func
+        import re
+        variants = cls._get_phone_lookup_variants(phone)
+        if not variants:
+            return None
+        conditions = [User.phone.in_(variants)]
+        clean_digits = re.sub(r"\D", "", str(phone))[-10:]
+        if clean_digits and len(clean_digits) == 10:
+            cleaned_db_phone = func.regexp_replace(User.phone, r"\D", "", "g")
+            conditions.append(cleaned_db_phone.in_([clean_digits, f"91{clean_digits}", f"0{clean_digits}"]))
+        return or_(*conditions)
+
+    async def get_by_phone(self, phone: str) -> User | None:
+        from sqlalchemy import case
+        filter_cond = self._build_phone_filter_conditions(phone)
+        if filter_cond is None:
+            return None
+        stmt = (
+            select(User)
+            .where(filter_cond)
+            .order_by(
+                case(
+                    (User.role == "superadmin", 1),
+                    (User.role == "super_admin", 1),
+                    (User.role == "admin", 2),
+                    (User.role == "delivery_boy", 3),
+                    (User.role == "delivery_person", 3),
+                    (User.role == "customer", 4),
+                    else_=5,
+                ),
+                User.is_active.desc(),
+                User.created_at.desc(),
+            )
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
+
+    async def get_all_by_phone(self, phone: str) -> list[User]:
+        from sqlalchemy import case
+        filter_cond = self._build_phone_filter_conditions(phone)
+        if filter_cond is None:
+            return []
+        stmt = (
+            select(User)
+            .where(filter_cond)
+            .order_by(
+                case(
+                    (User.role == "superadmin", 1),
+                    (User.role == "super_admin", 1),
+                    (User.role == "admin", 2),
+                    (User.role == "delivery_boy", 3),
+                    (User.role == "delivery_person", 3),
+                    (User.role == "customer", 4),
+                    else_=5,
+                ),
+                User.is_active.desc(),
+                User.created_at.desc(),
+            )
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_staff_by_phone(self, phone: str) -> User | None:
+        from sqlalchemy import case
+        filter_cond = self._build_phone_filter_conditions(phone)
+        if filter_cond is None:
+            return None
+        staff_roles = ["superadmin", "super_admin", "admin", "delivery_boy", "delivery_person"]
+        stmt = (
+            select(User)
+            .where(filter_cond, User.role.in_(staff_roles))
+            .order_by(
+                case(
+                    (User.role == "superadmin", 1),
+                    (User.role == "super_admin", 1),
+                    (User.role == "admin", 2),
+                    (User.role == "delivery_boy", 3),
+                    (User.role == "delivery_person", 3),
+                    else_=4,
+                ),
+                User.is_active.desc(),
+                User.created_at.desc(),
+            )
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
+
+    async def get_by_phone_and_role(self, phone: str, role: str) -> User | None:
+        from app.schemas.auth import normalize_staff_role
+        canonical_role = role
+        try:
+            canonical_role = normalize_staff_role(role)
+        except Exception:
+            pass
+        filter_cond = self._build_phone_filter_conditions(phone)
+        if filter_cond is None:
+            return None
+        target_roles = {role, canonical_role}
+        if "delivery_boy" in target_roles or "delivery_person" in target_roles:
+            target_roles.update(["delivery_boy", "delivery_person"])
+        if "superadmin" in target_roles or "super_admin" in target_roles:
+            target_roles.update(["superadmin", "super_admin"])
+        allowed = ["superadmin", "super_admin", "admin", "delivery_boy", "delivery_person", "customer"]
+        valid_roles = [r for r in target_roles if r in allowed]
+        if not valid_roles:
+            return None
+        stmt = (
+            select(User)
+            .where(filter_cond, User.role.in_(valid_roles))
+            .order_by(
+                User.is_active.desc(),
+                User.created_at.desc(),
+            )
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
 
     # ==========================================================
     # Get By ID

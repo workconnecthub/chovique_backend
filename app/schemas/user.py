@@ -178,8 +178,8 @@ class SystemUserResponse(BaseModel):
     def from_orm_user(cls, user) -> "SystemUserResponse":
         role = user.role
         # Derive permissions from role
-        is_superadmin = (role == "superadmin")
-        is_admin = (role in ("admin", "superadmin"))
+        is_superadmin = (role in ("superadmin", "super_admin"))
+        is_admin = (role in ("admin", "superadmin", "super_admin"))
         initials = "".join(p[0].upper() for p in (user.full_name or "").split()[:2])
         raw_avatar = getattr(user, "avatar_url", None)
         if raw_avatar and "storageapi.dev" in raw_avatar:

@@ -32,9 +32,9 @@ class OTPError(AppError):
 class InvalidOTPError(OTPError):
     """Raised when the OTP code does not match."""
 
-    def __init__(self, remaining_attempts: int | None = None):
-        msg = "Invalid OTP."
-        if remaining_attempts is not None and remaining_attempts > 0:
+    def __init__(self, remaining_attempts: int | None = None, message: str | None = None):
+        msg = message or "Invalid OTP."
+        if not message and remaining_attempts is not None and remaining_attempts > 0:
             msg = f"Invalid OTP. {remaining_attempts} attempt(s) remaining."
         super().__init__(message=msg, remaining_attempts=remaining_attempts)
 
@@ -42,9 +42,9 @@ class InvalidOTPError(OTPError):
 class OTPExpiredError(OTPError):
     """Raised when the OTP has expired or does not exist."""
 
-    def __init__(self, remaining_attempts: int | None = None):
-        msg = "OTP has expired. Please request a new one."
-        if remaining_attempts is not None and remaining_attempts > 0:
+    def __init__(self, remaining_attempts: int | None = None, message: str | None = None):
+        msg = message or "OTP has expired. Please request a new one."
+        if not message and remaining_attempts is not None and remaining_attempts > 0:
             msg = f"OTP has expired. {remaining_attempts} attempt(s) remaining."
         super().__init__(message=msg, remaining_attempts=remaining_attempts)
 
@@ -52,9 +52,9 @@ class OTPExpiredError(OTPError):
 class MaxAttemptsExceededError(OTPError):
     """Raised when the maximum number of OTP verification attempts is reached."""
 
-    def __init__(self):
+    def __init__(self, message: str | None = None):
         super().__init__(
-            message="Maximum OTP verification attempts exceeded. Please try again later.",
+            message=message or "Maximum OTP verification attempts exceeded. Please try again later.",
             remaining_attempts=0,
         )
 

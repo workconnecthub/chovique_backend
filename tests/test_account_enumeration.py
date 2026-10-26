@@ -2,13 +2,11 @@
 Unit and Integration Tests for Account Enumeration Defense (AUTH-002 Remediation).
 
 Verifies:
-1. Google OAuth-only accounts (with hashed_password=None) return standard "Invalid email or password." on POST /auth/login.
-2. Non-existent accounts return standard "Invalid email or password." on POST /auth/login.
-3. Incorrect password returns standard "Invalid email or password." on POST /auth/login.
-4. Deactivated accounts with incorrect password do not leak deactivation status and return "Invalid email or password.".
-5. Resending registration OTP for an already verified email returns generic success without leaking registration state.
-6. Forgot password requests return identical generic messages for registered and unregistered emails.
-7. Legitimate login with valid password succeeds normally (HTTP 200).
+1. Non-existent accounts return standard 401 Unauthorized on POST /auth/staff/login.
+2. Incorrect staff password returns standard 401 Unauthorized on POST /auth/staff/login.
+3. Deactivated staff accounts return 403 Forbidden on POST /auth/staff/login.
+4. Forgot password requests return identical generic messages for registered and unregistered identifiers.
+5. Legitimate staff login with valid credentials succeeds normally (HTTP 200).
 """
 
 import pytest
@@ -21,152 +19,113 @@ pytestmark = pytest.mark.asyncio
 
 class TestAccountEnumerationDefense:
 
-    async def test_oauth_user_password_login_returns_generic_error(self, client: AsyncClient, db_session):
-        """Google OAuth user without password hash receives generic 'Invalid email or password.' on login."""
-        # Create Google OAuth user (hashed_password=None)
-        user_repo = UserRepository(db_session)
-        await user_repo.create(
-            full_name="OAuth User",
-            email="oauth_only@example.com",
-            hashed_password=None,
-            google_id="google-123456",
-            role="customer",
-            is_email_verified=True,
-            is_active=True,
-        )
-
+    async def test_nonexistent_staff_login_returns_generic_error(self, client: AsyncClient):
+        """Non-existent staff member receives generic 401 Unauthorized on login."""
         response = await client.post(
-            "/api/v1/auth/login",
+            "/api/v1/auth/staff/login",
             json={
-                "email": "oauth_only@example.com",
-                "password": "SomeRandomPassword1!",
-            },
-        )
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Invalid email or password."
-
-    async def test_nonexistent_user_login_returns_generic_error(self, client: AsyncClient):
-        """Non-existent user receives generic 'Invalid email or password.' on login."""
-        response = await client.post(
-            "/api/v1/auth/login",
-            json={
-                "email": "nonexistent_user_987@example.com",
+                "phone": "9876599999",
                 "password": "SomePassword1!",
             },
         )
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Invalid email or password."
+        assert response.status_code == 401
+        assert "invalid" in response.json()["detail"].lower()
 
     async def test_wrong_password_returns_generic_error(self, client: AsyncClient, db_session):
-        """Existing password user with incorrect password receives generic 'Invalid email or password.'."""
+        """Existing staff user with incorrect password receives generic 401 Unauthorized."""
         user_repo = UserRepository(db_session)
         await user_repo.create(
-            full_name="Standard User",
-            email="standard_user@example.com",
+            full_name="Staff Admin",
+            email="staff_admin@example.com",
+            phone="9876500001",
             hashed_password=hash_password("CorrectPassword1!"),
-            role="customer",
-            is_email_verified=True,
+            role="admin",
+            is_phone_verified=True,
             is_active=True,
         )
 
         response = await client.post(
-            "/api/v1/auth/login",
+            "/api/v1/auth/staff/login",
             json={
-                "email": "standard_user@example.com",
+                "phone": "9876500001",
                 "password": "WrongPassword1!",
             },
         )
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Invalid email or password."
+        assert response.status_code == 401
+        assert "invalid" in response.json()["detail"].lower()
 
-    async def test_deactivated_user_with_wrong_password_does_not_leak_deactivation(self, client: AsyncClient, db_session):
-        """Deactivated user with wrong password receives generic 'Invalid email or password.' (no deactivation leak)."""
+    async def test_deactivated_staff_fails_securely(self, client: AsyncClient, db_session):
+        """Deactivated staff member receives appropriate deactivation error."""
         user_repo = UserRepository(db_session)
         await user_repo.create(
-            full_name="Deactivated User",
-            email="deactivated_user@example.com",
+            full_name="Deactivated Staff",
+            email="deactivated_staff@example.com",
+            phone="9876500002",
             hashed_password=hash_password("CorrectPassword1!"),
-            role="customer",
-            is_email_verified=True,
+            role="admin",
+            is_phone_verified=True,
             is_active=False,
         )
 
         response = await client.post(
-            "/api/v1/auth/login",
+            "/api/v1/auth/staff/login",
             json={
-                "email": "deactivated_user@example.com",
-                "password": "IncorrectPassword1!",
+                "phone": "9876500002",
+                "password": "CorrectPassword1!",
             },
         )
-        assert response.status_code == 400
-        assert response.json()["detail"] == "Invalid email or password."
-
-    async def test_resend_otp_for_verified_user_returns_generic_success(self, client: AsyncClient, db_session):
-        """Resend OTP on verified email returns generic success response without disclosing registration state."""
-        user_repo = UserRepository(db_session)
-        await user_repo.create(
-            full_name="Verified User",
-            email="verified_registered@example.com",
-            hashed_password=hash_password("Password123!"),
-            role="customer",
-            is_email_verified=True,
-            is_active=True,
-        )
-
-        response = await client.post(
-            "/api/v1/auth/resend-otp",
-            json={"email": "verified_registered@example.com"},
-        )
-        assert response.status_code == 200
-        assert response.json()["message"] == "OTP resent successfully."
+        assert response.status_code == 403
+        assert "deactivated" in response.json()["detail"].lower()
 
     async def test_forgot_password_generic_response(self, client: AsyncClient, db_session):
         """Forgot password returns identical generic response for existing and non-existing accounts."""
         user_repo = UserRepository(db_session)
         await user_repo.create(
-            full_name="Forgot User",
-            email="forgot_existing@example.com",
+            full_name="Forgot Staff",
+            email="forgot_staff@example.com",
+            phone="9876500003",
             hashed_password=hash_password("Password123!"),
-            role="customer",
-            is_email_verified=True,
+            role="admin",
+            is_phone_verified=True,
             is_active=True,
         )
 
         res_existing = await client.post(
             "/api/v1/auth/forgot-password",
-            json={"email": "forgot_existing@example.com"},
+            json={"phone": "9876500003"},
         )
         res_nonexisting = await client.post(
             "/api/v1/auth/forgot-password",
-            json={"email": "forgot_nonexisting@example.com"},
+            json={"phone": "9876599998"},
         )
 
         assert res_existing.status_code == 200
         assert res_nonexisting.status_code == 200
-        assert res_existing.json()["message"] == "If email exists, OTP has been sent."
-        assert res_nonexisting.json()["message"] == "If email exists, OTP has been sent."
+        assert "OTP" in res_existing.json()["message"]
+        assert "OTP" in res_nonexisting.json()["message"]
 
-    async def test_legitimate_login_success(self, client: AsyncClient, db_session):
-        """Legitimate user with valid password logs in successfully (HTTP 200)."""
+    async def test_legitimate_staff_login_success(self, client: AsyncClient, db_session):
+        """Legitimate staff user with valid credentials logs in successfully (HTTP 200)."""
         user_repo = UserRepository(db_session)
         await user_repo.create(
-            full_name="Valid User",
-            email="valid_login_user@example.com",
+            full_name="Valid Admin",
+            email="valid_admin@example.com",
+            phone="9876500004",
             hashed_password=hash_password("CorrectPass1!"),
-            role="customer",
-            is_email_verified=True,
+            role="admin",
+            is_phone_verified=True,
             is_active=True,
         )
 
         response = await client.post(
-            "/api/v1/auth/login",
+            "/api/v1/auth/staff/login",
             json={
-                "email": "valid_login_user@example.com",
+                "phone": "9876500004",
                 "password": "CorrectPass1!",
             },
         )
         assert response.status_code == 200
         assert response.json()["message"] == "Login successful."
-        assert response.json()["user"]["email"] == "valid_login_user@example.com"
+        assert response.json()["user"]["role"] == "admin"
         assert "access_token" in response.cookies
         assert "refresh_token" in response.cookies

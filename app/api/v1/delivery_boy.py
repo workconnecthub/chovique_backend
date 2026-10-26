@@ -48,7 +48,7 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin – Delivery Management"]
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 def _require_delivery_boy(current_user: User) -> User:
-    if current_user.role not in ("delivery_boy", "admin", "superadmin"):
+    if current_user.role not in ("delivery_boy", "delivery_person", "admin", "superadmin", "super_admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Delivery account required. Please log in with a delivery executive or store manager account.",
@@ -205,6 +205,14 @@ class CreateDeliveryBoyRequest(BaseModel):
     phone: Optional[str] = None
     password: str
 
+    @field_validator("phone")
+    @classmethod
+    def _validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v and str(v).strip():
+            from app.integrations.msg91 import normalize_phone
+            return normalize_phone(v, default_country_code="+91")
+        return None
+
     @field_validator("password")
     @classmethod
     def _strong_password(cls, v: str) -> str:
@@ -219,6 +227,14 @@ class UpdateDeliveryBoyRequest(BaseModel):
     phone: Optional[str] = None
     password: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("phone")
+    @classmethod
+    def _validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v and str(v).strip():
+            from app.integrations.msg91 import normalize_phone
+            return normalize_phone(v, default_country_code="+91")
+        return None
 
 
 class AssignDeliveryBoyPayload(BaseModel):
@@ -791,7 +807,7 @@ async def list_delivery_boys(
     current_user: User = Depends(require_role("admin", "superadmin")),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(User).where(User.role == "delivery_boy")
+    stmt = select(User).where(User.role.in_(["delivery_boy", "delivery_person"]))
     if is_active is not None:
         stmt = stmt.where(User.is_active == is_active)
     stmt = stmt.order_by(User.created_at.desc())
@@ -846,11 +862,24 @@ async def create_delivery_boy(
             detail="A user with this email already exists.",
         )
 
+    from app.integrations.msg91 import normalize_phone
+    clean_phone = normalize_phone(payload.phone) if payload.phone else None
+
+    if clean_phone:
+        existing_phone = await db.execute(
+            select(User).where(User.phone == clean_phone)
+        )
+        if existing_phone.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="A user with this mobile number already exists.",
+            )
+
     new_boy = User(
         full_name=payload.full_name.strip(),
         email=payload.email.lower().strip(),
-        phone=payload.phone,
-        role="delivery_boy",
+        phone=clean_phone,
+        role="delivery_person",
         hashed_password=hash_password(payload.password),
         is_active=True,
         is_email_verified=True,
@@ -883,7 +912,7 @@ async def update_delivery_boy(
     from app.core.security import hash_password
 
     result = await db.execute(
-        select(User).where(User.id == delivery_boy_id, User.role == "delivery_boy")
+        select(User).where(User.id == delivery_boy_id, User.role.in_(["delivery_boy", "delivery_person"]))
     )
     boy = result.scalar_one_or_none()
     if not boy:
@@ -902,7 +931,11 @@ async def update_delivery_boy(
             raise HTTPException(status_code=400, detail="A user with this email address already exists.")
         boy.email = payload.email.strip().lower()
     if payload.phone is not None:
-        boy.phone = payload.phone.strip() if payload.phone.strip() else None
+        if payload.phone and str(payload.phone).strip():
+            from app.integrations.msg91 import normalize_phone
+            boy.phone = normalize_phone(payload.phone)
+        else:
+            boy.phone = None
     if payload.password is not None and payload.password.strip():
         if len(payload.password.strip()) < 6:
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
@@ -933,7 +966,7 @@ async def deactivate_delivery_boy(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(User).where(User.id == delivery_boy_id, User.role == "delivery_boy")
+        select(User).where(User.id == delivery_boy_id, User.role.in_(["delivery_boy", "delivery_person"]))
     )
     boy = result.scalar_one_or_none()
     if not boy:
@@ -980,7 +1013,7 @@ async def assign_delivery_boy(
     boy_result = await db.execute(
         select(User).where(
             User.id == payload.delivery_boy_id,
-            User.role == "delivery_boy",
+            User.role.in_(["delivery_boy", "delivery_person"]),
             User.is_active == True,
         )
     )
@@ -1026,7 +1059,7 @@ async def batch_assign_delivery_boy(
     boy_result = await db.execute(
         select(User).where(
             User.id == payload.delivery_boy_id,
-            User.role == "delivery_boy",
+            User.role.in_(["delivery_boy", "delivery_person"]),
             User.is_active == True,
         )
     )

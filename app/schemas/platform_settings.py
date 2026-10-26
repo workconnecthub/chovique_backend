@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 import re
 
 
@@ -55,6 +55,30 @@ class CustomerOrderSchema(BaseModel):
     order_cancellation_enabled: bool = True
     cancellation_time_limit: int = Field(..., ge=1)
     return_refund_enabled: bool = True
+    return_requests_enabled: bool = True
+    return_window_value: int = Field(default=30, ge=1, le=10080)
+    return_window_unit: str = Field(default="minutes")
+    return_photo_required: bool = False
+
+    @field_validator("return_window_unit")
+    @classmethod
+    def validate_return_window_unit(cls, v: str) -> str:
+        clean = (v or "").strip().lower()
+        if clean not in ("minutes", "hours", "days"):
+            raise ValueError("Return window unit must be 'minutes', 'hours', or 'days'.")
+        return clean
+
+    @model_validator(mode="after")
+    def validate_return_window_value_for_unit(self):
+        unit = (self.return_window_unit or "minutes").lower()
+        val = self.return_window_value
+        if unit == "minutes" and val > 10080:
+            raise ValueError("Return window in minutes cannot exceed 10,080 (7 days).")
+        elif unit == "hours" and val > 720:
+            raise ValueError("Return window in hours cannot exceed 720 (30 days).")
+        elif unit == "days" and val > 30:
+            raise ValueError("Return window in days cannot exceed 30 days.")
+        return self
 
 
 class SystemSecuritySchema(BaseModel):
@@ -99,6 +123,10 @@ class PlatformSettingsResponse(BaseModel):
     order_cancellation_enabled: bool
     cancellation_time_limit: int
     return_refund_enabled: bool
+    return_requests_enabled: bool = True
+    return_window_value: int = 30
+    return_window_unit: str = "minutes"
+    return_photo_required: bool = False
 
     # System & Security
     maintenance_mode: bool
@@ -110,6 +138,7 @@ class PlatformSettingsResponse(BaseModel):
     updated_by: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
 
 
 class PlatformSettingsUpdateRequest(

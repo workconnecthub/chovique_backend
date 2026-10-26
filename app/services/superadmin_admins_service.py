@@ -24,7 +24,7 @@ class SuperadminAdminsService:
     async def _count_superadmins(self, exclude_id: Optional[str] = None) -> int:
         """Count active superadmin accounts in the database."""
         stmt = select(func.count(User.id)).where(
-            User.role == "superadmin",
+            User.role.in_(["superadmin", "super_admin"]),
             User.is_active == True,
         )
         if exclude_id:
@@ -59,10 +59,13 @@ class SuperadminAdminsService:
 
         hashed_pwd = hash_password(payload.password)
 
+        from app.integrations.msg91 import normalize_phone
+        clean_phone = normalize_phone(payload.phone) if payload.phone else None
+
         new_admin = User(
             full_name=payload.full_name.strip(),
             email=payload.email.lower().strip(),
-            phone=payload.phone.strip() if payload.phone else None,
+            phone=clean_phone,
             hashed_password=hashed_pwd,
             role=payload.role.lower(),
             is_active=(payload.status.lower() == "active"),
@@ -118,7 +121,7 @@ class SuperadminAdminsService:
         limit: int = 10,
     ) -> AdminListResponse:
         """Fetch paginated list of administrators."""
-        stmt = select(User).where(User.role.in_(["admin", "superadmin"]))
+        stmt = select(User).where(User.role.in_(["admin", "superadmin", "super_admin"]))
 
         if search and search.strip():
             pattern = f"%{search.strip()}%"
@@ -159,7 +162,7 @@ class SuperadminAdminsService:
     async def get_admin_by_id(self, admin_id: str) -> AdminUserResponse:
         """Fetch administrator details by ID."""
         user = await self.db.get(User, admin_id)
-        if not user or user.role not in ["admin", "superadmin"]:
+        if not user or user.role not in ["admin", "superadmin", "super_admin"]:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Administrator account not found.",
@@ -171,7 +174,7 @@ class SuperadminAdminsService:
     ) -> AdminUserResponse:
         """Update administrator profile details."""
         user = await self.db.get(User, admin_id)
-        if not user or user.role not in ["admin", "superadmin"]:
+        if not user or user.role not in ["admin", "superadmin", "super_admin"]:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Administrator account not found.",
@@ -193,11 +196,15 @@ class SuperadminAdminsService:
             user.full_name = payload.full_name.strip()
 
         if payload.phone is not None:
-            user.phone = payload.phone.strip() if payload.phone else None
+            if payload.phone and str(payload.phone).strip():
+                from app.integrations.msg91 import normalize_phone
+                user.phone = normalize_phone(payload.phone)
+            else:
+                user.phone = None
 
         # Guardrail: Role Demotion Check
         if payload.role and payload.role != user.role:
-            if user.role == "superadmin" and payload.role == "admin":
+            if user.role in ("superadmin", "super_admin") and payload.role == "admin":
                 remaining_superadmins = await self._count_superadmins(exclude_id=user.id)
                 if remaining_superadmins == 0:
                     raise HTTPException(
@@ -208,7 +215,7 @@ class SuperadminAdminsService:
 
         if payload.status:
             new_is_active = (payload.status.lower() == "active")
-            if user.role == "superadmin" and not new_is_active and user.is_active:
+            if user.role in ("superadmin", "super_admin") and not new_is_active and user.is_active:
                 remaining_superadmins = await self._count_superadmins(exclude_id=user.id)
                 if remaining_superadmins == 0:
                     raise HTTPException(
@@ -271,7 +278,7 @@ class SuperadminAdminsService:
         new_is_active = (payload.status.lower() == "active")
 
         # Guardrail: Cannot deactivate last superadmin
-        if user.role == "superadmin" and not new_is_active and user.is_active:
+        if user.role in ("superadmin", "super_admin") and not new_is_active and user.is_active:
             remaining_superadmins = await self._count_superadmins(exclude_id=user.id)
             if remaining_superadmins == 0:
                 raise HTTPException(
@@ -397,14 +404,14 @@ class SuperadminAdminsService:
             )
 
         user = await self.db.get(User, admin_id)
-        if not user or user.role not in ["admin", "superadmin"]:
+        if not user or user.role not in ["admin", "superadmin", "super_admin"]:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Administrator account not found.",
             )
 
         # Guardrail 2: Prevent deleting last remaining superadmin
-        if user.role == "superadmin":
+        if user.role in ("superadmin", "super_admin"):
             remaining_superadmins = await self._count_superadmins(exclude_id=user.id)
             if remaining_superadmins == 0:
                 raise HTTPException(

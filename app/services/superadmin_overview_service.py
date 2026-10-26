@@ -209,7 +209,7 @@ class SuperadminOverviewService:
         # -----------------------------------------------------
         curr_admin_res = await self.db.execute(
             select(func.count(User.id)).where(
-                User.role.in_(["admin", "superadmin"]),
+                User.role.in_(["admin", "superadmin", "super_admin"]),
                 User.is_active == True,
             )
         )
@@ -217,7 +217,7 @@ class SuperadminOverviewService:
 
         prev_admin_res = await self.db.execute(
             select(func.count(User.id)).where(
-                User.role.in_(["admin", "superadmin"]),
+                User.role.in_(["admin", "superadmin", "super_admin"]),
                 User.is_active == True,
                 User.created_at <= prev_end,
             )

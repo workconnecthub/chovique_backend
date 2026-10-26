@@ -26,8 +26,12 @@ class SupportTicket(Base):
     admin_notes = Column(Text, nullable=True)
     customer_resolution_feedback = Column(String(50), nullable=True)
     notified = Column(Boolean, default=False, nullable=False)
+    photo_url = Column(String(500), nullable=True)
+    return_request_id = Column(String(36), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True)
+    assigned_admin = Column(String(120), nullable=True)
 
     customer = relationship("User")
     order = relationship("Order")

@@ -39,32 +39,12 @@ CREATE INDEX IF NOT EXISTS ix_sa_notif_category_is_read ON superadmin_notificati
 CREATE INDEX IF NOT EXISTS ix_sa_notif_severity_created ON superadmin_notifications (severity, created_at);
 """
 
-# Seed some initial demo superadmin notifications if table is empty
-SEED_DEMO = """
-INSERT INTO superadmin_notifications (id, title, message, category, severity, is_read, created_at)
-SELECT 'demo-sa-notif-1', 'Multiple Failed Admin Login Attempts', 'Multiple failed login attempts detected for account admin@chovique.com.', 'SECURITY', 'CRITICAL', FALSE, NOW() - INTERVAL '30 minutes'
-WHERE NOT EXISTS (SELECT 1 FROM superadmin_notifications WHERE id = 'demo-sa-notif-1');
-
-INSERT INTO superadmin_notifications (id, title, message, category, severity, is_read, created_at)
-SELECT 'demo-sa-notif-2', 'New Admin Account Registered', 'Administrator account for Sarah Jenkins (sarah@chovique.com) was created.', 'ADMIN_MANAGEMENT', 'INFO', FALSE, NOW() - INTERVAL '2 hours'
-WHERE NOT EXISTS (SELECT 1 FROM superadmin_notifications WHERE id = 'demo-sa-notif-2');
-
-INSERT INTO superadmin_notifications (id, title, message, category, severity, is_read, created_at)
-SELECT 'demo-sa-notif-3', 'Platform Security Configuration Updated', 'Admin session timeout and lockout duration settings were updated.', 'PLATFORM_SYSTEM', 'WARNING', TRUE, NOW() - INTERVAL '1 day'
-WHERE NOT EXISTS (SELECT 1 FROM superadmin_notifications WHERE id = 'demo-sa-notif-3');
-
-INSERT INTO superadmin_notifications (id, title, message, category, severity, is_read, created_at)
-SELECT 'demo-sa-notif-4', 'Monthly Revenue Target Milestone Reached', 'Store revenue exceeded the ₹500,000 threshold for the current billing cycle.', 'BUSINESS', 'INFO', TRUE, NOW() - INTERVAL '2 days'
-WHERE NOT EXISTS (SELECT 1 FROM superadmin_notifications WHERE id = 'demo-sa-notif-4');
-"""
-
 def main():
     with engine.connect() as conn:
         print("Creating superadmin_notifications table and indexes...")
         conn.execute(text(DDL))
-        conn.execute(text(SEED_DEMO))
         conn.commit()
-        print("Done! superadmin_notifications table created and seeded.")
+        print("Done! superadmin_notifications table created.")
 
 if __name__ == "__main__":
     main()

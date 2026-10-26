@@ -155,23 +155,94 @@ async def cancel_order(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+from fastapi import Request, Form, File, UploadFile
+from app.schemas.return_request import ReturnRequestResponse
+from app.services.return_service import ReturnService
+
+
 @router.post(
     "/{order_id}/return",
     response_model=OrderResponse,
-    summary="Request order return (within 4 days of delivery)",
+    summary="Submit return request for delivered order (within 30 minutes of delivery)",
 )
 async def return_order(
     order_id: str,
-    payload: Optional[OrderReturnPayload] = None,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    service = CustomerService(db)
+    reason = None
+    description = None
+    photo = None
+    photo_url = None
+
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        reason = form.get("reason")
+        description = form.get("description")
+        photo_field = form.get("photo")
+        if photo_field is not None and hasattr(photo_field, "filename") and bool(getattr(photo_field, "filename", None)):
+            photo = photo_field
+        elif isinstance(photo_field, str) and photo_field.strip():
+            photo_url = photo_field.strip()
+        photo_url_field = form.get("photo_url")
+        if isinstance(photo_url_field, str) and photo_url_field.strip() and not photo:
+            photo_url = photo_url_field.strip()
+
+    elif "application/json" in content_type:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                reason = body.get("reason")
+                description = body.get("description")
+                photo_url = body.get("photo_url")
+        except Exception:
+            pass
+
+    clean_reason = str(reason or "")
+    clean_desc = str(description or "")
+
+    return_service = ReturnService(db)
     try:
-        reason = payload.reason if payload else None
-        order = await service.return_order(order_id, current_user.id, reason=reason)
+        return_req = await return_service.create_return_request(
+            order_id=order_id,
+            user=current_user,
+            reason=clean_reason,
+            description=clean_desc,
+            photo=photo,
+            photo_url=photo_url,
+        )
+        # Fetch updated order response
+        customer_service = CustomerService(db)
+        order = await customer_service.order_repo.get_by_id(order_id)
         if not order:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found.")
-        return order
+        resp = customer_service._format_order_response(order)
+        resp.return_request = ReturnRequestResponse.model_validate(return_req)
+        return resp
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.get(
+    "/{order_id}/return",
+    response_model=ReturnRequestResponse,
+    summary="Get return request details for an order",
+)
+async def get_order_return_request(
+    order_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return_service = ReturnService(db)
+    return_req = await return_service.get_return_request_by_order(order_id, current_user)
+    if not return_req:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No return request found for this order."
+        )
+    return ReturnRequestResponse.model_validate(return_req)
+

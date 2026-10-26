@@ -27,3 +27,6 @@ from app.models.wishlist import WishlistItem
 from app.models.store_location import StoreLocation
 from app.models.delivery_service_area import DeliveryServiceArea
 from app.models.delivery_location import DeliveryPersonLocation
+from app.models.otp_challenge import OTPChallenge
+from app.models.otp_daily_limit import OTPDailyLimit
+from app.models.return_request import ReturnRequest

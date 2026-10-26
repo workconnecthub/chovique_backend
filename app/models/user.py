@@ -16,14 +16,21 @@ class User(Base):
 
     # ==========================
     # Authentication
-    # ==========================
-    full_name = Column(String(120), nullable=False)
-    email = Column(String(254), unique=True, nullable=False, index=True)
+    full_name = Column(String(120), nullable=True, default="Customer")
+    email = Column(String(254), unique=True, nullable=True, index=True)
     hashed_password = Column(String(255), nullable=True)
     google_id = Column(String(120), unique=True, nullable=True)
 
     role = Column(
-        Enum("customer", "admin", "superadmin", "delivery_boy", name="user_role"),
+        Enum(
+            "customer",
+            "admin",
+            "superadmin",
+            "super_admin",
+            "delivery_boy",
+            "delivery_person",
+            name="user_role",
+        ),
         nullable=False,
         default="customer",
     )
@@ -31,7 +38,7 @@ class User(Base):
     # ==========================
     # Profile
     # ==========================
-    phone = Column(String(20), nullable=True)
+    phone = Column(String(20), nullable=True, index=True)
     address = Column(Text, nullable=True)
     dob = Column(Date, nullable=True)
     gender = Column(String(20), nullable=True)
@@ -41,6 +48,7 @@ class User(Base):
     # Status
     # ==========================
     is_email_verified = Column(Boolean, default=False, nullable=False)
+    is_phone_verified = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
 
     # ==========================

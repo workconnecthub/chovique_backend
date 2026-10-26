@@ -288,10 +288,13 @@ class AdminService:
         )
         admin_count = int(admin_count_result.scalar() or 0)
 
-        # Reward coins issued
+        # Reward coins issued (customer accounts only)
         from app.models.wallet import CoinTransaction
+        from app.models.user import User
         coins_result = await self.db.execute(
-            select(func.sum(CoinTransaction.coins)).where(CoinTransaction.type.in_(["EARN", "ADJUSTMENT"]))
+            select(func.sum(CoinTransaction.coins))
+            .join(User, CoinTransaction.user_id == User.id)
+            .where(User.role == "customer", CoinTransaction.type.in_(["EARN", "WELCOME", "FIRST_ORDER_BONUS", "ACCOUNT_CREATION", "ADJUSTMENT"]))
         )
         reward_coins_issued = int(coins_result.scalar() or 0)
 
@@ -1682,29 +1685,145 @@ class AdminService:
     # ==========================================================
 
     async def get_all_tickets(self) -> list[SupportTicketResponse]:
-        """Get all support tickets site-wide (admin view)."""
-        result = await self.db.execute(
-            select(SupportTicket).order_by(SupportTicket.created_at.desc())
-        )
-        tickets = result.scalars().all()
+        """Get all support tickets site-wide (admin view), integrating return tickets."""
         from datetime import datetime
-        return [
-            SupportTicketResponse(
-                id=t.id,
-                customerId=t.customer_id,
-                customerName=t.customer_name,
-                category=t.category,
-                description=t.description,
-                status=t.status,
-                orderId=t.order_id,
-                order_id=t.order_id,
-                adminNotes=t.admin_notes,
-                customerResolutionFeedback=t.customer_resolution_feedback,
-                date=t.created_at.strftime("%Y-%m-%d") if t.created_at else datetime.now().strftime("%Y-%m-%d"),
-                notified=t.notified,
+        from app.models.return_request import ReturnRequest
+        from app.models.ticket import SupportTicket
+        from sqlalchemy.orm import selectinload
+
+        # 1. Fetch all ReturnRequests and index by ticket_id and order_id
+        ret_result = await self.db.execute(
+            select(ReturnRequest).options(selectinload(ReturnRequest.order))
+        )
+        all_returns = ret_result.scalars().all()
+        returns_by_ticket = {r.ticket_id: r for r in all_returns if r.ticket_id}
+        returns_by_order = {r.order_id: r for r in all_returns if r.order_id}
+
+        # 2. Fetch existing SupportTickets
+        result = await self.db.execute(
+            select(SupportTicket)
+            .options(selectinload(SupportTicket.order), selectinload(SupportTicket.customer))
+            .order_by(SupportTicket.created_at.desc())
+        )
+        existing_tickets = result.scalars().all()
+        existing_ticket_ids = {t.id for t in existing_tickets}
+
+        # 3. Automatically create/persist SupportTicket for any orphaned ReturnRequest
+        db_dirty = False
+        for ret in all_returns:
+            if not ret.ticket_id or ret.ticket_id not in existing_ticket_ids:
+                new_tkt = SupportTicket(
+                    customer_id=ret.customer_id,
+                    customer_name=ret.customer_name or "Valued Customer",
+                    category="Return Request",
+                    description=f"[{ret.reason}] {ret.description}",
+                    order_id=ret.order_id,
+                    status=ret.status or "Pending",
+                    photo_url=ret.photo_url,
+                    return_request_id=ret.id,
+                )
+                self.db.add(new_tkt)
+                await self.db.flush()
+                ret.ticket_id = new_tkt.id
+                self.db.add(ret)
+                returns_by_ticket[new_tkt.id] = ret
+                db_dirty = True
+
+        if db_dirty:
+            await self.db.commit()
+            result = await self.db.execute(
+                select(SupportTicket)
+                .options(selectinload(SupportTicket.order), selectinload(SupportTicket.customer))
+                .order_by(SupportTicket.created_at.desc())
             )
-            for t in tickets
-        ]
+            existing_tickets = result.scalars().all()
+
+        res_list = []
+        for t in existing_tickets:
+            ord_obj = t.order
+            cust_obj = t.customer
+            ret_obj = returns_by_ticket.get(t.id) or (returns_by_order.get(t.order_id) if t.order_id else None)
+
+            ord_amount = None
+            if ret_obj and ret_obj.order_amount is not None:
+                ord_amount = float(ret_obj.order_amount)
+            elif ord_obj and getattr(ord_obj, "total", None) is not None:
+                ord_amount = float(ord_obj.total)
+
+            pay_method = None
+            if ret_obj and ret_obj.payment_method:
+                pay_method = str(ret_obj.payment_method)
+            elif ord_obj and getattr(ord_obj, "payment_method", None):
+                pay_method = str(ord_obj.payment_method)
+
+            deliv_addr = None
+            if ret_obj and ret_obj.delivery_address:
+                deliv_addr = ret_obj.delivery_address
+            elif ord_obj and getattr(ord_obj, "shipping_address", None):
+                deliv_addr = ord_obj.shipping_address
+
+            deliv_at = None
+            if ret_obj and ret_obj.delivered_at:
+                deliv_at = ret_obj.delivered_at.isoformat()
+            elif ord_obj and getattr(ord_obj, "delivered_at", None):
+                deliv_at = ord_obj.delivered_at.isoformat()
+
+            ret_reason = None
+            if ret_obj and ret_obj.reason:
+                ret_reason = str(ret_obj.reason)
+            elif ord_obj and getattr(ord_obj, "return_reason", None):
+                ret_reason = str(ord_obj.return_reason)
+
+            cust_email = (ret_obj.customer_email if ret_obj and ret_obj.customer_email else None) or (cust_obj.email if cust_obj else None)
+            cust_phone = (ret_obj.customer_phone if ret_obj and ret_obj.customer_phone else None) or (cust_obj.phone if cust_obj else None)
+            photo = (ret_obj.photo_url if ret_obj and ret_obj.photo_url else None) or getattr(t, "photo_url", None)
+            ret_id = (ret_obj.id if ret_obj else None) or getattr(t, "return_request_id", None)
+            assigned_admin = getattr(t, "assigned_admin", None)
+            created_at_str = t.created_at.isoformat() if getattr(t, "created_at", None) else None
+            updated_at_str = t.updated_at.isoformat() if getattr(t, "updated_at", None) else None
+
+            res_list.append(
+                SupportTicketResponse(
+                    id=t.id,
+                    customerId=t.customer_id,
+                    customerName=t.customer_name,
+                    customer_email=cust_email,
+                    customerEmail=cust_email,
+                    customer_phone=cust_phone,
+                    customerPhone=cust_phone,
+                    category=t.category,
+                    description=t.description,
+                    status=t.status,
+                    orderId=t.order_id,
+                    order_id=t.order_id,
+                    adminNotes=t.admin_notes,
+                    customerResolutionFeedback=t.customer_resolution_feedback,
+                    date=t.created_at.strftime("%Y-%m-%d") if t.created_at else datetime.now().strftime("%Y-%m-%d"),
+                    notified=t.notified,
+                    photo_url=photo,
+                    photoUrl=photo,
+                    return_request_id=ret_id,
+                    returnRequestId=ret_id,
+                    order_amount=ord_amount,
+                    orderAmount=ord_amount,
+                    payment_method=pay_method,
+                    paymentMethod=pay_method,
+                    delivery_address=deliv_addr,
+                    deliveryAddress=deliv_addr,
+                    delivered_at=deliv_at,
+                    deliveredAt=deliv_at,
+                    return_reason=ret_reason,
+                    returnReason=ret_reason,
+                    currency="₹",
+                    assigned_admin=assigned_admin,
+                    assignedAdmin=assigned_admin,
+                    created_at=created_at_str,
+                    createdAt=created_at_str,
+                    updated_at=updated_at_str,
+                    updatedAt=updated_at_str,
+                )
+            )
+        return res_list
 
     async def update_ticket_status(
         self,
@@ -1713,7 +1832,7 @@ class AdminService:
         admin_id: str,
     ) -> SupportTicketResponse | None:
         """Update ticket status (intermediate state) and notify user."""
-        from datetime import datetime
+        from datetime import datetime, timezone
         ticket = await self.ticket_repo.get_by_id(ticket_id)
         if not ticket:
             return None
@@ -1727,6 +1846,46 @@ class AdminService:
                 ticket.status_change_count += 1
             if payload.admin_notes is not None:
                 ticket.admin_notes = payload.admin_notes
+
+            # Record assigned admin and updated_at
+            try:
+                from app.repositories.user_repository import UserRepository
+                user_repo = UserRepository(self.db)
+                adm_user = await user_repo.get_by_id(admin_id)
+                if adm_user:
+                    ticket.assigned_admin = adm_user.full_name or adm_user.email
+            except Exception:
+                pass
+            ticket.updated_at = datetime.now(timezone.utc)
+
+            # If linked to return request, sync return request and order status
+            try:
+                from app.models.return_request import ReturnRequest
+                from sqlalchemy import select
+                ret_obj = None
+                if getattr(ticket, "return_request_id", None):
+                    ret_res = await self.db.execute(select(ReturnRequest).where(ReturnRequest.id == ticket.return_request_id))
+                    ret_obj = ret_res.scalars().first()
+                elif getattr(ticket, "order_id", None):
+                    ret_res = await self.db.execute(select(ReturnRequest).where(ReturnRequest.order_id == ticket.order_id))
+                    ret_obj = ret_res.scalars().first()
+                if ret_obj:
+                    ret_obj.status = payload.status
+                    if payload.admin_notes is not None:
+                        ret_obj.admin_notes = payload.admin_notes
+                    ret_obj.updated_at = datetime.now(timezone.utc)
+                    self.db.add(ret_obj)
+
+                    order = await self.order_repo.get_by_id(ret_obj.order_id)
+                    if order:
+                        if payload.status == "Approved":
+                            order.status = "Returned"
+                        elif payload.status == "Rejected":
+                            order.status = "Delivered"
+                        self.db.add(order)
+            except Exception as e_ret:
+                logger.warning("Failed to sync ReturnRequest on ticket status update: %s", e_ret)
+
             await self.db.commit()
             await self.db.refresh(ticket)
 
@@ -1741,20 +1900,8 @@ class AdminService:
                     reference_id=ticket.id,
                 )
 
-        return SupportTicketResponse(
-            id=ticket.id,
-            customerId=ticket.customer_id,
-            customerName=ticket.customer_name,
-            category=ticket.category,
-            description=ticket.description,
-            status=ticket.status,
-            orderId=ticket.order_id,
-            order_id=ticket.order_id,
-            adminNotes=ticket.admin_notes,
-            customerResolutionFeedback=ticket.customer_resolution_feedback,
-            date=ticket.created_at.strftime("%Y-%m-%d") if ticket.created_at else datetime.now().strftime("%Y-%m-%d"),
-            notified=ticket.notified,
-        )
+        from app.services.customer_service import CustomerService
+        return CustomerService(self.db)._format_ticket_response(ticket)
 
     async def resolve_ticket(
         self,
@@ -1775,6 +1922,37 @@ class AdminService:
         if payload.admin_notes:
             ticket.admin_notes = payload.admin_notes
         ticket.notified = True
+
+        try:
+            from app.repositories.user_repository import UserRepository
+            user_repo = UserRepository(self.db)
+            adm_user = await user_repo.get_by_id(admin_id)
+            if adm_user:
+                ticket.assigned_admin = adm_user.full_name or adm_user.email
+        except Exception:
+            pass
+        from datetime import datetime, timezone
+        ticket.updated_at = datetime.now(timezone.utc)
+
+        # If linked to return request, sync return request status
+        try:
+            from app.models.return_request import ReturnRequest
+            from sqlalchemy import select
+            ret_obj = None
+            if getattr(ticket, "return_request_id", None):
+                ret_res = await self.db.execute(select(ReturnRequest).where(ReturnRequest.id == ticket.return_request_id))
+                ret_obj = ret_res.scalars().first()
+            elif getattr(ticket, "order_id", None):
+                ret_res = await self.db.execute(select(ReturnRequest).where(ReturnRequest.order_id == ticket.order_id))
+                ret_obj = ret_res.scalars().first()
+            if ret_obj:
+                ret_obj.status = "Resolved"
+                if payload.admin_notes:
+                    ret_obj.admin_notes = payload.admin_notes
+                self.db.add(ret_obj)
+        except Exception as e_ret:
+            logger.warning("Failed to sync ReturnRequest on ticket resolution: %s", e_ret)
+
         await self.db.commit()
         await self.db.refresh(ticket)
 
@@ -1810,20 +1988,8 @@ class AdminService:
         except Exception as e:
             logger.error(f"Failed to send ticket resolution email: {e}")
 
-        return SupportTicketResponse(
-            id=ticket.id,
-            customerId=ticket.customer_id,
-            customerName=ticket.customer_name,
-            category=ticket.category,
-            description=ticket.description,
-            status=ticket.status,
-            orderId=ticket.order_id,
-            order_id=ticket.order_id,
-            adminNotes=ticket.admin_notes,
-            customerResolutionFeedback=ticket.customer_resolution_feedback,
-            date=ticket.created_at.strftime("%Y-%m-%d") if ticket.created_at else datetime.now().strftime("%Y-%m-%d"),
-            notified=ticket.notified,
-        )
+        from app.services.customer_service import CustomerService
+        return CustomerService(self.db)._format_ticket_response(ticket)
 
     # ==========================================================
     # Offline Sales

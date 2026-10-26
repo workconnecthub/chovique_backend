@@ -715,7 +715,7 @@ class TestCancellationAndReturnPolicy:
         res_cancel = await authenticated_client.post(f"/api/v1/orders/{order_id}/cancel")
         assert res_cancel.status_code == 400
 
-    async def test_return_policy_within_4_days(self, authenticated_client: AsyncClient):
+    async def test_return_policy_within_30_minutes(self, authenticated_client: AsyncClient):
         await _seed()
         async with TestSessionLocal() as session:
             user_res = await session.execute(select(User).where(User.email == "test@example.com"))
@@ -730,8 +730,8 @@ class TestCancellationAndReturnPolicy:
                 status="Delivered",
                 payment_status="PAID",
                 shipping_address={"name": "Test", "street": "123", "city": "City", "state": "State", "zip": "12345", "phone": "9999999999"},
-                created_at=now - timedelta(days=5),
-                delivered_at=now - timedelta(days=1),
+                created_at=now - timedelta(days=1),
+                delivered_at=now - timedelta(minutes=10),
             )
             session.add(order)
             await session.commit()
@@ -745,11 +745,14 @@ class TestCancellationAndReturnPolicy:
         assert data["is_returnable"] is True
 
         # Request return via API
-        res_ret = await authenticated_client.post(f"/api/v1/orders/{order_id}/return", json={"reason": "Wrong flavor received"})
+        res_ret = await authenticated_client.post(
+            f"/api/v1/orders/{order_id}/return",
+            json={"reason": "Wrong product delivered", "description": "Wrong flavor received in box"}
+        )
         assert res_ret.status_code == 200
         assert res_ret.json()["status"] == "Return Requested"
 
-    async def test_return_policy_exceeded_4_days(self, authenticated_client: AsyncClient):
+    async def test_return_policy_exceeded_30_minutes(self, authenticated_client: AsyncClient):
         await _seed()
         async with TestSessionLocal() as session:
             user_res = await session.execute(select(User).where(User.email == "test@example.com"))
@@ -764,8 +767,8 @@ class TestCancellationAndReturnPolicy:
                 status="Delivered",
                 payment_status="PAID",
                 shipping_address={"name": "Test", "street": "123", "city": "City", "state": "State", "zip": "12345", "phone": "9999999999"},
-                created_at=now - timedelta(days=10),
-                delivered_at=now - timedelta(days=5),
+                created_at=now - timedelta(days=2),
+                delivered_at=now - timedelta(minutes=45),
             )
             session.add(order)
             await session.commit()
@@ -776,6 +779,9 @@ class TestCancellationAndReturnPolicy:
         assert res.status_code == 200
         assert res.json()["is_returnable"] is False
 
-        res_ret = await authenticated_client.post(f"/api/v1/orders/{order_id}/return")
+        res_ret = await authenticated_client.post(
+            f"/api/v1/orders/{order_id}/return",
+            json={"reason": "Damaged product", "description": "Damaged box upon arrival"}
+        )
         assert res_ret.status_code == 400
-        assert "4-day return window" in res_ret.json()["detail"]
+        assert "30 minutes" in res_ret.json()["detail"].lower() or "expired" in res_ret.json()["detail"].lower()
