@@ -642,6 +642,22 @@ class AdminService:
     async def update_footer_config(self, payload: dict, admin_id: Optional[str] = None) -> dict:
         existing = await self.get_footer_config()
         updated = {**existing, **payload}
+
+        # Auto-mirror any external/remote payment badge logos to the Tigris/S3 bucket
+        badges = updated.get("payment_badges")
+        if isinstance(badges, list):
+            from app.services.storage_service import storage_service
+            for badge in badges:
+                if isinstance(badge, dict) and badge.get("image_url"):
+                    img_url = str(badge["image_url"]).strip()
+                    if (img_url.startswith("http://") or img_url.startswith("https://")) and not ("tigris" in img_url or "railway" in img_url or "chovique" in img_url or "localhost" in img_url or "127.0.0.1" in img_url):
+                        try:
+                            stored_url = await storage_service.upload_from_url(img_url, folder="chocolate-world/cms/payments")
+                            if stored_url:
+                                badge["image_url"] = stored_url
+                        except Exception as e:
+                            logger.warning("Failed to store badge url '%s' to bucket: %s", img_url, e)
+
         await self.site_config_repo.set("footer_config", updated)
         if admin_id:
             try:

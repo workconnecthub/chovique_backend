@@ -244,11 +244,19 @@ class StorageService:
                 if resp.status_code == 200 and resp.content:
                     content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
                     ext = "jpg"
-                    if "png" in content_type:
+                    if "svg" in content_type or image_url.lower().endswith(".svg"):
+                        ext = "svg"
+                        content_type = "image/svg+xml"
+                    elif "png" in content_type or image_url.lower().endswith(".png"):
                         ext = "png"
-                    elif "webp" in content_type:
+                        content_type = "image/png"
+                    elif "webp" in content_type or image_url.lower().endswith(".webp"):
                         ext = "webp"
-                    key = self._build_key(folder, f"avatar.{ext}")
+                        content_type = "image/webp"
+                    elif "gif" in content_type or image_url.lower().endswith(".gif"):
+                        ext = "gif"
+                        content_type = "image/gif"
+                    key = self._build_key(folder, f"badge.{ext}")
                     url = self._upload_to_s3(resp.content, key, content_type)
                     logger.info("Successfully mirrored external image '%s' to Railway bucket: %s", image_url, url)
                     return url

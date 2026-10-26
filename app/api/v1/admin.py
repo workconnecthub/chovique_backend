@@ -2675,6 +2675,27 @@ async def upload_cms_image(
     return {"image_url": image_url}
 
 
+class UploadImageUrlRequest(BaseModel):
+    image_url: str
+    folder: str = "chocolate-world/cms/payments"
+
+
+@router.post(
+    "/upload-image-url",
+    summary="Download external image URL and store in Tigris/S3 bucket for CMS (admin only)",
+)
+async def upload_cms_image_from_url(
+    payload: UploadImageUrlRequest,
+    current_user: User = Depends(require_role("admin", "superadmin")),
+):
+    from app.services.storage_service import storage_service
+    image_url = await storage_service.upload_from_url(
+        image_url=payload.image_url,
+        folder=payload.folder or "chocolate-world/cms/payments",
+    )
+    return {"image_url": image_url}
+
+
 @router.post(
     "/upload-video",
     summary="Upload video to storage bucket for CMS (admin only)",
