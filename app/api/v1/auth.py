@@ -344,6 +344,12 @@ async def staff_login(
         raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected error in staff_login: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Staff login failed: {str(e)}",
+        )
 
 
 # ======================================================

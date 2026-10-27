@@ -8,6 +8,10 @@ from passlib.context import CryptContext
 from app.core.config import settings
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 pwd_context = CryptContext(
     schemes=["argon2", "bcrypt"],
     deprecated="auto",
@@ -22,10 +26,16 @@ pwd_context = CryptContext(
 def hash_password(
     password: str
 ) -> str:
-
-    return pwd_context.hash(
-        password
-    )
+    try:
+        return pwd_context.hash(password)
+    except Exception as e:
+        logger.warning("Primary pwd_context.hash failed (%s). Falling back to direct bcrypt.", e)
+        try:
+            import bcrypt
+            salt = bcrypt.gensalt()
+            return bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
+        except Exception:
+            raise e
 
 
 
@@ -33,11 +43,22 @@ def verify_password(
     plain_password: str,
     hashed_password: str,
 ) -> bool:
-
-    return pwd_context.verify(
-        plain_password,
-        hashed_password,
-    )
+    if not hashed_password or not plain_password:
+        return False
+    try:
+        return pwd_context.verify(
+            plain_password,
+            hashed_password,
+        )
+    except Exception as e:
+        logger.warning("pwd_context.verify failed (%s). Attempting fallback check.", e)
+        try:
+            import bcrypt
+            if hashed_password.startswith("$2") or hashed_password.startswith("$2b$") or hashed_password.startswith("$2a$"):
+                return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+        except Exception:
+            pass
+        return False
 
 
 

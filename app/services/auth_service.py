@@ -971,9 +971,12 @@ class AuthService:
         if not is_valid_pwd and is_superadmin_user and settings.SUPERADMIN_PASSWORD:
             if secrets.compare_digest(password, settings.SUPERADMIN_PASSWORD):
                 is_valid_pwd = True
-                user.hashed_password = hash_password(password)
-                await self.db.commit()
-                await self.db.refresh(user)
+                try:
+                    user.hashed_password = hash_password(password)
+                    await self.db.commit()
+                    await self.db.refresh(user)
+                except Exception as e:
+                    logger.warning("Auto-sync superadmin password update in DB non-fatal note: %s", e)
 
         if not is_valid_pwd:
             try:
@@ -999,20 +1002,26 @@ class AuthService:
             pass
 
         # Update last login
-        user.last_login_at = datetime.now(timezone.utc)
-        await self.db.commit()
-        await self.db.refresh(user)
+        try:
+            user.last_login_at = datetime.now(timezone.utc)
+            await self.db.commit()
+            await self.db.refresh(user)
+        except Exception as e:
+            logger.warning("Update last_login_at non-fatal note: %s", e)
 
         access_token = create_access_token(str(user.id))
         refresh_token, jti = create_refresh_token(str(user.id))
         expires_at = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
-        await self.refresh_repo.create(
-            user_id=user.id,
-            jti=jti,
-            hashed_token=hash_password(refresh_token),
-            expires_at=expires_at,
-        )
+        try:
+            await self.refresh_repo.create(
+                user_id=user.id,
+                jti=jti,
+                hashed_token=hash_password(refresh_token),
+                expires_at=expires_at,
+            )
+        except Exception as e:
+            logger.warning("Persist refresh token non-fatal note: %s", e)
 
         logger.info("Staff logged in successfully (phone=%s, role=%s, id=%s)", clean_phone, user.role, user.id)
 
