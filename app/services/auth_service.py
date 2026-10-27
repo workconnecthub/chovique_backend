@@ -960,11 +960,20 @@ class AuthService:
         is_valid_pwd = False
         if user.hashed_password:
             is_valid_pwd = verify_password(password, user.hashed_password)
-        elif normalized_role in ("superadmin", "super_admin") and settings.SUPERADMIN_PASSWORD:
-            is_valid_pwd = secrets.compare_digest(password, settings.SUPERADMIN_PASSWORD)
-            if is_valid_pwd:
+
+        # Fallback & auto-sync for Super Admin:
+        # If DB hash did not match (e.g. database was seeded earlier with another password,
+        # or environment configuration was updated), check if it matches authoritative SUPERADMIN_PASSWORD.
+        is_superadmin_user = bool(
+            user.role in ("superadmin", "super_admin")
+            or (normalized_role in ("superadmin", "super_admin"))
+        )
+        if not is_valid_pwd and is_superadmin_user and settings.SUPERADMIN_PASSWORD:
+            if secrets.compare_digest(password, settings.SUPERADMIN_PASSWORD):
+                is_valid_pwd = True
                 user.hashed_password = hash_password(password)
                 await self.db.commit()
+                await self.db.refresh(user)
 
         if not is_valid_pwd:
             try:

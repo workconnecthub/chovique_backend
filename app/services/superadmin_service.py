@@ -92,6 +92,10 @@ async def ensure_superadmin_exists(db: AsyncSession) -> Optional[User]:
             existing_user.phone = clean_phone
             existing_user.is_phone_verified = True
             updated = True
+        if getattr(settings, "SUPERADMIN_FORCE_RESET_PASSWORD", False) and admin_password:
+            existing_user.hashed_password = hash_password(admin_password)
+            logger.info("SUPERADMIN_FORCE_RESET_PASSWORD active: Password updated for Super Admin.")
+            updated = True
         if updated:
             await db.commit()
             await db.refresh(existing_user)

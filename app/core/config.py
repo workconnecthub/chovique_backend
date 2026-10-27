@@ -400,6 +400,15 @@ class Settings(BaseSettings):
         ),
     )
 
+    SUPERADMIN_FORCE_RESET_PASSWORD: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "SUPERADMIN_FORCE_RESET_PASSWORD",
+            "SUPER_ADMIN_FORCE_RESET_PASSWORD",
+            "SUPERADMIN_RESET_PASSWORD",
+        ),
+    )
+
     # =========================================================
     # GOOGLE GEMINI AI
     # =========================================================
