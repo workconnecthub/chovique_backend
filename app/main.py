@@ -314,6 +314,9 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 app.include_router(api_router)
 
+from app.api.v1.whatsapp_webhook import router as whatsapp_webhook_router
+app.include_router(whatsapp_webhook_router)
+
 
 # ==========================================================
 # Global Exception Handlers
